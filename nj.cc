@@ -50,7 +50,12 @@ unsigned int nj(TPOcc ** D, unsigned int n, unsigned char ** seq, struct TSwitch
 		}
 	}
 
-	njTree(mat, njTreeOut);
+	double _t0 = gettime ();
+	if ( sw . guide_tree == 1 )
+		upgmaTree ( mat, njTreeOut, UpgmaAvg () );   /* O(n^2) UPGMA (avg linkage) */
+	else
+		njTree ( mat, njTreeOut );                  /* O(n^3) neighbor-joining */
+	double _t_njtree = gettime () - _t0;
 
 	typedef Iterator<TGraph, EdgeIterator>::Type TEdgeIter;
 	TEdgeIter edIt(njTreeOut);
@@ -65,8 +70,11 @@ unsigned int nj(TPOcc ** D, unsigned int n, unsigned char ** seq, struct TSwitch
 	fprintf ( stderr, " Starting progressive alignment\n" );
 
 	/*Progressively aligns sequences using refined sequences*/
+	_t0 = gettime ();
 	progAlignment( D, seq , njTreeOut, sw , Rot , branchingOrder, n );
-	
+	double _t_prog = gettime () - _t0;
+	fprintf ( stderr, "Phase times: njtree=%lf  progressive=%lf secs.\n", _t_njtree, _t_prog );
+
 	delete( branchingOrder );
 	
 	return 0;

@@ -35,6 +35,7 @@ using namespace std;
 
 unsigned int progAlignment(TPOcc ** D, unsigned char ** seq, TGraph njTree, struct TSwitch  sw, int * Rot, vector<array<int, 2>> * branchingOrder, unsigned int num_seqs )
 {
+	double _t_rot = 0.0, _t_fin = 0.0, _t_dp_all = 0.0, _t_trace = 0.0;
 	int * R = ( int * ) calloc ( num_seqs , sizeof ( int ) );
 
 	unsigned char ** sequences;
@@ -259,10 +260,11 @@ unsigned int progAlignment(TPOcc ** D, unsigned char ** seq, TGraph njTree, stru
 
 				profileB->clear(); // clear profileB so can be re-inserted with refined sequences
 
-				/* Find the best rotation from the refined sequence using DP score */
-				unsigned char ** rotatedSeq = ( unsigned char ** ) calloc( ( profileBPos->size() ) , sizeof( unsigned char * ) );
+			/* Find the best rotation from the refined sequence using DP score */
+			unsigned char ** rotatedSeq = ( unsigned char ** ) calloc( ( profileBPos->size() ) , sizeof( unsigned char * ) );
 
-				for(int i=0; i<3*rs; i++ )
+			double _ts = gettime ();
+			for(int i=0; i<3*rs; i++ )
 				{
 					if ( i >=rs && i < 2 * rs )
 						continue;
@@ -283,9 +285,11 @@ unsigned int progAlignment(TPOcc ** D, unsigned char ** seq, TGraph njTree, stru
 					for(int k = 0; k < profileBPos->size(); k++ )
 						free( rotatedSeq[k] );
 
-					profileB->clear();
-				}
-				free( rotatedSeq );			
+				profileB->clear();
+			}
+			_t_rot += gettime () - _ts;
+			free( rotatedSeq );			
+
 			
 
 				for(int i=0; i<characters->size(); i++)
@@ -380,31 +384,37 @@ unsigned int progAlignment(TPOcc ** D, unsigned char ** seq, TGraph njTree, stru
 				profileA->push_back( sequences[ profileAPos->at(i) ] );			
 			}
 	
-			int ** TBl;
-			double * SMl, ** PMl, * IMl, * DMl;
+		int ** TBl;
+		double * SMl, ** PMl, * IMl, * DMl;
 
-			if( sw . U != sw . V )
-				alignAllocation_ag( PMl, SMl, IMl, DMl, TBl, characters, profileA, profileB, sw );
-			else alignAllocation( PMl, SMl, TBl, characters, profileA, profileB, sw );
+		double _tf = gettime ();
+		if( sw . U != sw . V )
+			alignAllocation_ag( PMl, SMl, IMl, DMl, TBl, characters, profileA, profileB, sw );
+		else alignAllocation( PMl, SMl, TBl, characters, profileA, profileB, sw );
 
-			/* Calculate traceback matrix */
-			if( sw . U != sw . V )
-				alignmentScore_ag( profileA, profileB, &score, sw, 0, &rotation, TBl, SMl, PMl, IMl, DMl, characters, 1);
-			else alignmentScore( profileA, profileB, &score, sw, 0, &rotation,  TBl, SMl, PMl, characters, 1);
+		/* Calculate traceback matrix */
+		if( sw . U != sw . V )
+			alignmentScore_ag( profileA, profileB, &score, sw, 0, &rotation, TBl, SMl, PMl, IMl, DMl, characters, 1);
+		else alignmentScore( profileA, profileB, &score, sw, 0, &rotation,  TBl, SMl, PMl, characters, 1);
+		double _t_dp = gettime () - _tf;
 
-			for(int i=0; i<characters->size(); i++)
-				free( PMl[i] );
-			characters->clear();
-	
-			if( sw . U != sw . V )
-			{
-				free( IMl );
-				free( DMl );
-			}
-			free( PMl );
-			free( SMl );
-			
-			alignSequences( profileA, profileB, profileAPos, profileBPos, sequences , TBl); // find the best alignment for sequences
+		for(int i=0; i<characters->size(); i++)
+			free( PMl[i] );
+		characters->clear();
+
+		if( sw . U != sw . V )
+		{
+			free( IMl );
+			free( DMl );
+		}
+		free( PMl );
+		free( SMl );
+
+		double _tt = gettime ();
+		alignSequences( profileA, profileB, profileAPos, profileBPos, sequences , TBl); // find the best alignment for sequences
+		_t_fin += gettime () - _tf;
+		_t_dp_all += _t_dp;
+		_t_trace += gettime () - _tt;
 
 			//free arrays 
 			for(int i=0; i<profileBPos->size(); i++)
@@ -435,6 +445,7 @@ unsigned int progAlignment(TPOcc ** D, unsigned char ** seq, TGraph njTree, stru
 	free ( sequences );
 	free( R );
 
+	fprintf ( stderr, "ProgAlign breakdown: rotation-search=%lf  dp=%lf  trace=%lf secs.\n", _t_rot, _t_dp_all, _t_trace );
 
 return 1;
 }
@@ -654,18 +665,38 @@ unsigned int alignmentScore(vector<unsigned char *> * profileA, vector<unsigned 
 
 
 	double prev_diag = 0;
-	for (int j = 1; j < n + 1; j++) 
+
+	int sigma = characters->size ();
+	int pBsize = profileB->size ();
+	double invB = ( pBsize > 0 ) ? 1.0 / pBsize : 0.0;
+	double * colScore = ( double * ) malloc ( ( n + 1 ) * sigma * sizeof ( double ) );
+	for ( int jj = 1; jj <= n; jj++ )
+		for ( int l = 0; l < sigma; l++ )
+		{
+			double s = 0; unsigned char cl = characters->at ( l );
+			for ( int k = 0; k < pBsize; k++ )
+				s += similarity ( profileB->at ( k )[jj-1], cl, sw );
+			colScore[ jj * sigma + l ] = s * invB;
+		}
+
+	for (int j = 1; j < n + 1; j++)
 	{
 		prev_diag = SM[0];
 		pds = 0;
 
         	SM[0] = SM[0] + sw . V;
 
-		for (int i = 1; i < m + 1; i++ ) 
+		const double * cs = &colScore[ j * sigma ];
+		for (int i = 1; i < m + 1; i++ )
 		{
 		    	pds = SM[i];
 
-			u = prev_diag + probScore( characters, i, j, PM, profileA, profileB, sw );
+			{
+				double ps = 0;
+				for ( int l = 0; l < sigma; l++ )
+					ps += PM[l][i-1] * cs[l];
+				u = prev_diag + ps;
+			}
 			v = SM[i-1] + sw . U; // gap in sequence
 			w = SM[i] + sw . U; // gap in profile
 
@@ -693,10 +724,12 @@ unsigned int alignmentScore(vector<unsigned char *> * profileA, vector<unsigned 
 	}
 
 	if( SM[m] > (*score) )
-	{	
-		( * rotation ) = i;	
-		( *score ) = SM[m];
+	{
+		( * rotation ) = i;
+		( *score) = SM[m];
 	}
+
+	free ( colScore );
 
 
 return 1;
@@ -1129,6 +1162,27 @@ unsigned int alignmentScore_ag(vector<unsigned char *> * profileA, vector<unsign
 
 	double prev_diag = 0;
 
+	/* Precompute, for each column j of profileB and each character l, the summed
+	   similarity of that column against l: colScore[j][l] = (1/|B|) sum_k sim.
+	   Then each DP cell costs O(sigma) instead of O(|B|*sigma) -- a |B|-factor
+	   speedup on the profile-profile DP. */
+	int sigma = characters->size ();
+	int pBsize = profileB->size ();
+	double invB = ( pBsize > 0 ) ? 1.0 / pBsize : 0.0;
+	double * colScore = ( double * ) malloc ( ( n + 1 ) * sigma * sizeof ( double ) );
+	for ( int j = 1; j <= n; j++ )
+	{
+		unsigned char colb = 0;
+		for ( int l = 0; l < sigma; l++ )
+		{
+			double s = 0;
+			unsigned char cl = characters->at ( l );
+			for ( int k = 0; k < pBsize; k++ )
+				s += similarity ( profileB->at ( k )[j-1], cl, sw );
+			colScore[ j * sigma + l ] = s * invB;
+		}
+	}
+
 	int init = sw . U;
 	for (int i = 1; i < m + 1; i++ ) 
 	{
@@ -1147,8 +1201,14 @@ unsigned int alignmentScore_ag(vector<unsigned char *> * profileA, vector<unsign
 		for (int j = 1; j < n + 1; j++) 
 		{
 		    	pds = SM[j];
-	
-			u = prev_diag + probScore( characters, i, j, PM, profileA, profileB , sw );
+
+			{
+				double ps = 0;
+				const double * cs = &colScore[ j * sigma ];
+				for ( int l = 0; l < sigma; l++ )
+					ps += PM[l][i-1] * cs[l];
+				u = prev_diag + ps;
+			}
 			
 			if( i == 1 && j == 1 )
 				DM[j] = MAX2 ( DM[j] + sw . V, init + sw . U );
@@ -1184,10 +1244,11 @@ unsigned int alignmentScore_ag(vector<unsigned char *> * profileA, vector<unsign
 
 
 	if( SM[n] > (*score) )
-	{	
+	{
 		( * rotation ) = i;
 		( *score ) = SM[n];
 	}
 
+	free ( colScore );
 return 1;
 }

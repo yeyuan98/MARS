@@ -237,6 +237,7 @@ int main(int argc, char **argv)
 		
 
 	int prevL = sw . l;
+	double _tq = 0.0, _tr = 0.0, _tn = 0.0;
 
 	if ( sw . load_matrix != NULL )
 	{
@@ -248,7 +249,11 @@ int main(int argc, char **argv)
 
 	/*Finds an approximate rotation for every pair of sequences in the data sets for method hCED*/
 	if ( sw . m == 0 )
+	{
+		double _s = gettime ();
 		circular_sequence_comparison ( seq, sw, D, num_seqs );
+		_tq = gettime () - _s;
+	}
 
 	if ( sw . m == 0 && sw . dump_cheap_matrix != NULL )
 		dump_distance_matrix ( sw . dump_cheap_matrix, D, num_seqs );
@@ -278,6 +283,7 @@ int main(int argc, char **argv)
 	}
 	else
 	{
+		double _s = gettime ();
 
 	#pragma omp parallel for
 	for ( int i = 0; i < num_seqs; i++ )
@@ -381,6 +387,7 @@ int main(int argc, char **argv)
 		}
 	}
 
+		_tr = gettime () - _s;
 	} /* end else (!no_refine) */
 
 	} /* end else (compute pairwise matrix) */
@@ -393,7 +400,11 @@ int main(int argc, char **argv)
 	sw . l = prevL;
 
 	/*Creates the guide tree*/
-	nj ( D, num_seqs, seq, sw, Rot );
+	{
+		double _s = gettime ();
+		nj ( D, num_seqs, seq, sw, Rot );
+		_tn = gettime () - _s;
+	}
 
 	fprintf ( stderr, " Preparing the output\n" );
 
@@ -435,6 +446,7 @@ int main(int argc, char **argv)
 	double end = gettime();
 
         fprintf( stderr, "Elapsed time for processing %d sequence(s): %lf secs.\n", num_seqs, ( end - start ) );
+        fprintf( stderr, "Phase times: q-gram=%lf  refine=%lf  nj+progressive=%lf secs.\n", _tq, _tr, _tn );
 	
 	/* Deallocate */
 	
