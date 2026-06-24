@@ -45,6 +45,7 @@ static struct option long_options[] =
    { "load-matrix",             required_argument, NULL, 'L' },
    { "dump-cheap-matrix",       required_argument, NULL, 'C' },
    { "no-refine",               no_argument,       NULL, 'N' },
+   { "qgram-refs",              required_argument, NULL, 'G' },
    { "help",                    no_argument,       NULL, 'h' },
    { NULL,                      0,                 NULL,  0  }
   };
@@ -69,6 +70,7 @@ int decode_switches ( int argc, char * argv [], struct TSwitch * sw )
    sw -> load_matrix                    = NULL;
    sw -> dump_cheap_matrix              = NULL;
    sw -> no_refine                      = 0;
+   sw -> qgram_refs                     = 0;
    sw -> O                              = -10;
    sw -> E                              = -1;
    sw -> U                              = -10;
@@ -80,7 +82,7 @@ int decode_switches ( int argc, char * argv [], struct TSwitch * sw )
    sw -> T                              = 1;
    args = 0;
 
-   while ( ( opt = getopt_long ( argc, argv, "a:i:o:l:q:m:U:V:O:E:T:P:D:L:C:Nh", long_options, &oi ) ) != -1 ) 
+   while ( ( opt = getopt_long ( argc, argv, "a:i:o:l:q:m:U:V:O:E:T:P:D:L:C:NG:h", long_options, &oi ) ) != -1 ) 
     {
 
       switch ( opt )
@@ -201,6 +203,15 @@ int decode_switches ( int argc, char * argv [], struct TSwitch * sw )
 
          case 'N':
             sw -> no_refine = 1;
+            break;
+
+         case 'G':
+            val = strtol ( optarg, &ep, 10 );
+            if ( optarg == ep )
+             {
+               return ( 0 );
+             }
+            sw -> qgram_refs = val;
             break;
 
          case 'h':

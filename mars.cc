@@ -261,6 +261,12 @@ int main(int argc, char **argv)
 		exit ( 1 );
 	}
 
+	if ( sw . qgram_refs > 0 && sw . m != 0 )
+	{
+		fprintf ( stderr, " Error: --qgram-refs is only supported with method 0 (hCED).\n" );
+		exit ( 1 );
+	}
+
 	if ( sw . no_refine )
 	{
 		/* --no-refine: skip the expensive pairwise refinement and the asymmetry

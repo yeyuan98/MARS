@@ -152,6 +152,24 @@ unsigned int circular_sequence_comparison (  unsigned char ** seq, struct TSwitc
 	int pos_xx = 0;
 	int pos_y = 0;
 
+	/* qgram-refs mode: pick R evenly-spaced reference sequences. Only (i, ref)
+	   pairs are computed; the rest is derived after the loop. References serve
+	   dual purpose: rotation median-vote AND an R-dim distance embedding. */
+	int nrefs = sw . qgram_refs;
+	int * refs = NULL;
+	char * is_ref = NULL;
+	if ( nrefs > 0 )
+	{
+		if ( nrefs > ( int ) num_seqs ) nrefs = num_seqs;
+		refs = ( int * ) malloc ( nrefs * sizeof ( int ) );
+		is_ref = ( char * ) calloc ( num_seqs, 1 );
+		for ( int k = 0; k < nrefs; k++ )
+		{
+			refs[k] = ( int ) ( ( ( long long ) k * num_seqs ) / nrefs );
+			is_ref[ refs[k] ] = 1;
+		}
+	}
+
 	for(int i=0; i<num_seqs; i++ )
 	{
 		int m = strlen( ( char * ) seq[i] );
@@ -178,7 +196,15 @@ unsigned int circular_sequence_comparison (  unsigned char ** seq, struct TSwitc
 				pos_y =  pos_y + ( 2 * m ); // n = m
 				continue;
 			}
-			
+
+			/* qgram-refs mode: only compute (i, ref) pairs; the rest is derived
+			   after the loop. */
+			if( nrefs > 0 && ! is_ref[j] )
+			{
+				pos_y = pos_y + ( 2 * ( int ) strlen ( ( char * ) seq[j] ) );
+				continue;
+			}
+
 			
 			int n = strlen( ( char * ) seq[j] );
 
@@ -312,6 +338,53 @@ unsigned int circular_sequence_comparison (  unsigned char ** seq, struct TSwitc
 		pos_xx = pos_xx + ( 2 * m );
 
 		free ( xx );
+	}
+
+	/* qgram-refs derivation. For each pair (i,j):
+	   - rotation = circular median over refs of (a[i][r]-a[j][r]) mod len_i
+	     (a[x][r] = rotation of x to align to ref r = D[x][r].rot).
+	   - distance = Euclidean distance between the R-dim reference-distance
+	     vectors (D[x][r].err)_r (a landmark embedding; guide-tree-tolerant). */
+	if ( nrefs > 0 )
+	{
+		for ( int i = 0; i < num_seqs; i++ )
+		{
+			int Li = strlen ( ( char * ) seq[i] );
+			for ( int j = 0; j < num_seqs; j++ )
+			{
+				if ( i == j ) { D_original[i][j].err = 0; D_original[i][j].rot = 0; continue; }
+				/* circular-median rotation estimate */
+				int best_est = 0; double best_sum = -1;
+				for ( int kk = 0; kk < nrefs; kk++ )
+				{
+					int ai = ( int ) D_original[i][ refs[kk] ] . rot;
+					int aj = ( int ) D_original[j][ refs[kk] ] . rot;
+					int est = ( ai - aj ) % Li; if ( est < 0 ) est += Li;
+					double s = 0;
+					for ( int ll = 0; ll < nrefs; ll++ )
+					{
+						int bi = ( int ) D_original[i][ refs[ll] ] . rot;
+						int bj = ( int ) D_original[j][ refs[ll] ] . rot;
+						int e2 = ( bi - bj ) % Li; if ( e2 < 0 ) e2 += Li;
+						int dd = est - e2; if ( dd < 0 ) dd = -dd;
+						if ( dd > Li / 2 ) dd = Li - dd;     /* circular distance */
+						s += dd;
+					}
+					if ( best_sum < 0 || s < best_sum ) { best_sum = s; best_est = est; }
+				}
+				D_original[i][j] . rot = ( unsigned int ) best_est;
+				/* Euclidean distance over reference-distance vectors */
+				double ss = 0;
+				for ( int kk = 0; kk < nrefs; kk++ )
+				{
+					double di = D_original[i][ refs[kk] ] . err;
+					double dj = D_original[j][ refs[kk] ] . err;
+					double dd = di - dj; ss += dd * dd;
+				}
+				D_original[i][j] . err = sqrt ( ss );
+			}
+		}
+		free ( refs ); free ( is_ref );
 	}
 
 	free ( invSA );
