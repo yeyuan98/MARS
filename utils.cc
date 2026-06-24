@@ -41,9 +41,12 @@ static struct option long_options[] =
    { "refine-blocks",           required_argument, NULL, 'P' },
    { "method",			required_argument, NULL, 'm' },
    { "threads", 		optional_argument, NULL, 'T' },
+   { "dump-matrix",             required_argument, NULL, 'D' },
+   { "load-matrix",             required_argument, NULL, 'L' },
+   { "dump-cheap-matrix",       required_argument, NULL, 'C' },
    { "help",                    no_argument,       NULL, 'h' },
    { NULL,                      0,                 NULL,  0  }
- };
+  };
 
 
 /* 
@@ -61,6 +64,9 @@ int decode_switches ( int argc, char * argv [], struct TSwitch * sw )
    sw -> alphabet                       = NULL;
    sw -> input_filename                 = NULL;
    sw -> output_filename                = NULL;
+   sw -> dump_matrix                    = NULL;
+   sw -> load_matrix                    = NULL;
+   sw -> dump_cheap_matrix              = NULL;
    sw -> O                              = -10;
    sw -> E                              = -1;
    sw -> U                              = -10;
@@ -72,7 +78,7 @@ int decode_switches ( int argc, char * argv [], struct TSwitch * sw )
    sw -> T                              = 1;
    args = 0;
 
-   while ( ( opt = getopt_long ( argc, argv, "a:i:o:l:q:m:U:V:O:E:T:P:h", long_options, &oi ) ) != -1 ) 
+   while ( ( opt = getopt_long ( argc, argv, "a:i:o:l:q:m:U:V:O:E:T:P:D:L:C:h", long_options, &oi ) ) != -1 ) 
     {
 
       switch ( opt )
@@ -167,18 +173,33 @@ int decode_switches ( int argc, char * argv [], struct TSwitch * sw )
            sw -> T = val;
            break;
 
-	 case 'm':
-           val = strtod ( optarg, &ep );
-           if ( optarg == ep )
-            {
-              return ( 0 );
-            }
-           sw -> m = val;
-           break;
+ 	 case 'm':
+            val = strtod ( optarg, &ep );
+            if ( optarg == ep )
+             {
+               return ( 0 );
+             }
+            sw -> m = val;
+            break;
+
+         case 'D':
+            sw -> dump_matrix = ( char * ) malloc ( ( strlen ( optarg ) + 1 ) * sizeof ( char ) );
+            strcpy ( sw -> dump_matrix, optarg );
+            break;
+
+         case 'L':
+            sw -> load_matrix = ( char * ) malloc ( ( strlen ( optarg ) + 1 ) * sizeof ( char ) );
+            strcpy ( sw -> load_matrix, optarg );
+            break;
+
+         case 'C':
+            sw -> dump_cheap_matrix = ( char * ) malloc ( ( strlen ( optarg ) + 1 ) * sizeof ( char ) );
+            strcpy ( sw -> dump_cheap_matrix, optarg );
+            break;
 
          case 'h':
-           return ( 0 );
-       }
+            return ( 0 );
+        }
     }
 
    if ( args < 3 )
@@ -231,5 +252,60 @@ void create_rotation ( unsigned char * x, unsigned int offset, unsigned char * r
 	memmove ( &rotation[0], &x[offset], m - offset );
 	memmove ( &rotation[m - offset], &x[0], offset );
 	rotation[m] = '\0';
+}
+
+void dump_distance_matrix ( char * filename, TPOcc ** D, unsigned int n )
+{
+	FILE * fd;
+	if ( ! ( fd = fopen ( filename, "w") ) )
+	{
+		fprintf ( stderr, " Error: Cannot open dump file %s!\n", filename );
+		exit ( 1 );
+	}
+	fprintf ( fd, "%u\n", n );
+	for ( unsigned int i = 0; i < n; i++ )
+	{
+		for ( unsigned int j = 0; j < n; j++ )
+			fprintf ( fd, "%u ", ( unsigned int ) D[i][j].err );
+		fprintf ( fd, "\n" );
+	}
+	for ( unsigned int i = 0; i < n; i++ )
+	{
+		for ( unsigned int j = 0; j < n; j++ )
+			fprintf ( fd, "%u ", ( unsigned int ) D[i][j].rot );
+		fprintf ( fd, "\n" );
+	}
+	fclose ( fd );
+}
+
+void load_distance_matrix ( char * filename, TPOcc ** D, unsigned int n )
+{
+	FILE * fd;
+	if ( ! ( fd = fopen ( filename, "r") ) )
+	{
+		fprintf ( stderr, " Error: Cannot open matrix file %s!\n", filename );
+		exit ( 1 );
+	}
+	unsigned int nn;
+	if ( fscanf ( fd, "%u", &nn ) != 1 || nn != n )
+	{
+		fprintf ( stderr, " Error: matrix size %u does not match num_seqs %u.\n", nn, n );
+		exit ( 1 );
+	}
+	for ( unsigned int i = 0; i < n; i++ )
+		for ( unsigned int j = 0; j < n; j++ )
+		{
+			unsigned int e;
+			if ( fscanf ( fd, "%u", &e ) != 1 ) { fprintf ( stderr, " Error reading err.\n" ); exit ( 1 ); }
+			D[i][j].err = ( double ) e;
+		}
+	for ( unsigned int i = 0; i < n; i++ )
+		for ( unsigned int j = 0; j < n; j++ )
+		{
+			unsigned int r;
+			if ( fscanf ( fd, "%u", &r ) != 1 ) { fprintf ( stderr, " Error reading rot.\n" ); exit ( 1 ); }
+			D[i][j].rot = r;
+		}
+	fclose ( fd );
 }
 

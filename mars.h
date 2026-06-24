@@ -47,6 +47,9 @@ struct TSwitch
    char               * alphabet;
    char               * input_filename;
    char               * output_filename;
+   char               * dump_matrix;
+   char               * load_matrix;
+   char               * dump_cheap_matrix;
    unsigned int         matrix;
    double	        P;
    int 			O, E, U, V, S, I, D, T;
@@ -74,3 +77,5 @@ void init_substitution_score_tables ( void );
 
 void cyclic(unsigned char *pattern1, unsigned char *pattern2, int length1, int length2, int time_rep, int norm, unsigned int * rotation, unsigned int * distance);
 extern void centra(char *string0, int a, char *sep, char *dummy ) ;
+void dump_distance_matrix ( char * filename, TPOcc ** D, unsigned int n );
+void load_distance_matrix ( char * filename, TPOcc ** D, unsigned int n );

@@ -237,10 +237,21 @@ int main(int argc, char **argv)
 		
 
 	int prevL = sw . l;
-	
-	/*Finds an approximate rotation for every pair of sequences in the data sets for method hCED*/ 
+
+	if ( sw . load_matrix != NULL )
+	{
+		load_distance_matrix ( sw . load_matrix, D, num_seqs );
+		init_substitution_score_tables ();
+	}
+	else
+	{
+
+	/*Finds an approximate rotation for every pair of sequences in the data sets for method hCED*/
 	if ( sw . m == 0 )
 		circular_sequence_comparison ( seq, sw, D, num_seqs );
+
+	if ( sw . m == 0 && sw . dump_cheap_matrix != NULL )
+		dump_distance_matrix ( sw . dump_cheap_matrix, D, num_seqs );
 
 	init_substitution_score_tables ();
 
@@ -346,6 +357,11 @@ int main(int argc, char **argv)
 		}
 	}
 
+	} /* end else (compute pairwise matrix) */
+
+	if ( sw . dump_matrix != NULL )
+		dump_distance_matrix ( sw . dump_matrix, D, num_seqs );
+
 	fprintf ( stderr, " Creating the guide tree\n" );
 
 	sw . l = prevL;
@@ -406,6 +422,9 @@ int main(int argc, char **argv)
         free ( sw . input_filename );
         free ( sw . output_filename );
         free ( sw . alphabet );
+        if ( sw . dump_matrix ) free ( sw . dump_matrix );
+        if ( sw . load_matrix ) free ( sw . load_matrix );
+        if ( sw . dump_cheap_matrix ) free ( sw . dump_cheap_matrix );
 
 	return ( 0 );
 }
