@@ -53,6 +53,7 @@ struct TSwitch
     int                  no_refine;
     int                  qgram_refs;
     int                  guide_tree;
+    int                  quality;
     unsigned int         matrix;
    double	        P;
    int 			O, E, U, V, S, I, D, T;

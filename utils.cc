@@ -47,6 +47,7 @@ static struct option long_options[] =
    { "no-refine",               no_argument,       NULL, 'N' },
    { "qgram-refs",              required_argument, NULL, 'G' },
    { "guide-tree",              required_argument, NULL, 'g' },
+   { "quality",                 required_argument, NULL, 'Q' },
    { "help",                    no_argument,       NULL, 'h' },
    { NULL,                      0,                 NULL,  0  }
   };
@@ -73,6 +74,7 @@ int decode_switches ( int argc, char * argv [], struct TSwitch * sw )
    sw -> no_refine                      = 0;
    sw -> qgram_refs                     = 0;
    sw -> guide_tree                     = 0;
+   sw -> quality                        = 0;
    sw -> O                              = -10;
    sw -> E                              = -1;
    sw -> U                              = -10;
@@ -84,7 +86,7 @@ int decode_switches ( int argc, char * argv [], struct TSwitch * sw )
    sw -> T                              = 1;
    args = 0;
 
-   while ( ( opt = getopt_long ( argc, argv, "a:i:o:l:q:m:U:V:O:E:T:P:D:L:C:NG:g:h", long_options, &oi ) ) != -1 ) 
+   while ( ( opt = getopt_long ( argc, argv, "a:i:o:l:q:m:U:V:O:E:T:P:D:L:C:NG:g:Q:h", long_options, &oi ) ) != -1 ) 
     {
 
       switch ( opt )
@@ -225,6 +227,25 @@ int decode_switches ( int argc, char * argv [], struct TSwitch * sw )
             sw -> guide_tree = val;
             break;
 
+         case 'Q':
+            val = strtol ( optarg, &ep, 10 );
+            if ( optarg == ep || val < 0 || val > 3 )
+             {
+               fprintf ( stderr, " Error: --quality must be 0, 1, 2, or 3.\n" );
+               exit ( 1 );
+             }
+            sw -> quality = ( int ) val;
+            /* Preset mapping to the individual optimisation flags. An individual
+               flag given AFTER -Q on the command line overrides the preset. */
+            switch ( ( int ) val )
+             {
+               case 0: sw -> no_refine = 0; sw -> qgram_refs = 0; sw -> guide_tree = 0; break;
+               case 1: sw -> no_refine = 1; sw -> qgram_refs = 0; sw -> guide_tree = 1; break;
+               case 2: sw -> no_refine = 1; sw -> qgram_refs = 5; sw -> guide_tree = 1; break;
+               case 3: sw -> no_refine = 1; sw -> qgram_refs = 1; sw -> guide_tree = 1; break;
+             }
+            break;
+
          case 'h':
             return ( 0 );
         }
@@ -265,6 +286,22 @@ void usage ( void )
    fprintf ( stdout, "  -V, --gap-extend-pro        <int>     Gap extension penalty in alignment of profiles. Default: -1.\n" );
    fprintf ( stdout, " Number of threads.\n" ); 
    fprintf ( stdout, "  -T, --threads               <int>     Number of threads to use. Default: 1. \n" );
+   fprintf ( stdout, " Speed optimisation (method 0 only; off by default, original MARS unchanged).\n" );
+   fprintf ( stdout, "  -Q, --quality               <int>     Speed-optimisation preset (recommended). Default: 0.\n" );
+   fprintf ( stdout, "                                         0 = original MARS (best quality, slowest).\n" );
+   fprintf ( stdout, "                                         1 = safe speedups: drop redundant refinement + fast guide tree.\n" );
+   fprintf ( stdout, "                                         2 = balanced (recommended): adds q-gram reference reduction (R=5).\n" );
+   fprintf ( stdout, "                                         3 = fastest: minimal q-gram references (R=1); may slightly loosen\n" );
+   fprintf ( stdout, "                                             quality in the short + high-divergence regime.\n" );
+   fprintf ( stdout, "                                         (Individual flags below override the preset when given AFTER -Q.)\n" );
+   fprintf ( stdout, "  -N, --no-refine             (flag)    Skip the expensive pairwise refinement (quality-preserving).\n" );
+   fprintf ( stdout, "  -G, --qgram-refs            <int>     q-gram reference mode: compute q-gram only vs R reference sequences\n" );
+   fprintf ( stdout, "                                         and derive the rest. R=0 off; try 5. Large q-gram-phase speedup.\n" );
+   fprintf ( stdout, "  -g, --guide-tree            <int>     Guide-tree method. 0 = Neighbor-Joining (default), 1 = UPGMA (faster).\n" );
+   fprintf ( stdout, " Debug / verification (off by default).\n" );
+   fprintf ( stdout, "  -D, --dump-matrix           <str>     Write the pairwise distance matrix (err then rot) to this file.\n" );
+   fprintf ( stdout, "  -L, --load-matrix           <str>     Skip the pairwise phase and load the distance matrix from this file.\n" );
+   fprintf ( stdout, "  -C, --dump-cheap-matrix     <str>     Write the pre-refinement (q-gram) distance matrix to this file.\n" );
  }
 
 double gettime( void )

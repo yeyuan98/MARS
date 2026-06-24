@@ -34,6 +34,17 @@ MARS is a program, which can be used in conjunction with any multiple sequence a
   -V, --gap-extend-pro        <int>     Gap extension penalty in alignment of profiles. Default: -1.
  Number of threads.
   -T, --threads               <int>     Number of threads to use. Default: 1. 
+ Speed optimisation (method 0 only; off by default, original behaviour unchanged).
+  -Q, --quality               <int>     Speed-optimisation preset (recommended). Default: 0.
+                                        0 = original MARS (best quality, slowest).
+                                        1 = safe speedups (drop redundant refinement + fast guide tree).
+                                        2 = balanced (recommended; adds q-gram reference reduction).
+                                        3 = fastest (minimal references; may slightly loosen quality for
+                                            short, highly-divergent inputs).
+                                        Individual flags below override the preset when given after -Q.
+  -N, --no-refine             (flag)    Skip the pairwise refinement (quality-preserving).
+  -G, --qgram-refs            <int>     Compute q-gram only vs R reference seqs and derive the rest. R=0 off; try 5.
+  -g, --guide-tree            <int>     Guide-tree method. 0 = Neighbor-Joining (default), 1 = UPGMA (faster).
 ```
 
 <b>Example</b>: For a typical run, see file EXAMPLES.
