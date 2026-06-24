@@ -49,8 +49,9 @@ struct TSwitch
    char               * output_filename;
    char               * dump_matrix;
    char               * load_matrix;
-   char               * dump_cheap_matrix;
-   unsigned int         matrix;
+    char               * dump_cheap_matrix;
+    int                  no_refine;
+    unsigned int         matrix;
    double	        P;
    int 			O, E, U, V, S, I, D, T;
    unsigned int         l, q, m;

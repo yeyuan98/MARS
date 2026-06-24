@@ -255,6 +255,24 @@ int main(int argc, char **argv)
 
 	init_substitution_score_tables ();
 
+	if ( sw . no_refine && sw . m != 0 )
+	{
+		fprintf ( stderr, " Error: --no-refine is only supported with method 0 (hCED).\n" );
+		exit ( 1 );
+	}
+
+	if ( sw . no_refine )
+	{
+		/* --no-refine: skip the expensive pairwise refinement and the asymmetry
+		   re-check; use the cheap q-gram matrix directly. Progressive alignment
+		   re-refines rotations per node, so output quality is preserved. */
+		unsigned int fm = strlen ( ( char * ) seq[0] );
+		if ( sw . l == 0 )
+			sw . l = sqrt ( fm );
+	}
+	else
+	{
+
 	#pragma omp parallel for
 	for ( int i = 0; i < num_seqs; i++ )
 	{	
@@ -356,6 +374,8 @@ int main(int argc, char **argv)
 			}
 		}
 	}
+
+	} /* end else (!no_refine) */
 
 	} /* end else (compute pairwise matrix) */
 
