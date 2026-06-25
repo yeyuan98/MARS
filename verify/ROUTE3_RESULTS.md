@@ -17,7 +17,7 @@ Result: **DP 40.4s -> 9.0s (4.5x)**, output unchanged.
 
 ## Finding 2: NJ tree construction was O(n^3)
 `njTree` (seqan) is O(n^3): 40.0s at n=500 (would be ~320s at n=1000). Since the guide
-tree is quality-tolerant (FINDINGS.md), swap in seqan's `upgmaTree` (O(n^2), avg linkage),
+tree is quality-tolerant (mbed_investigation.md), swap in seqan's `upgmaTree` (O(n^2), avg linkage),
 via `--guide-tree` (`-g`, 0=NJ default, 1=UPGMA).
 
 Result: **njtree 40.0s -> 0.09s (450x)**; quality circvar 0.0005 -> 0.0017 (still

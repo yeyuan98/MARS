@@ -37,7 +37,7 @@ Diverse grid (24 configs) + n=500. nr = --no-refine, gt = full MARS.
 (0.95), and only vs a near-perfect 0.0004 ground truth. No case shows a real
 quality collapse.
 
-(Note: "rot match %" varies 0-100% but is irrelevant — different global phase, see FINDINGS.)
+(Note: "rot match %" varies 0-100% but is irrelevant — different global phase, see mbed_investigation.md.)
 
 ## Speedup (--no-refine vs full)
 

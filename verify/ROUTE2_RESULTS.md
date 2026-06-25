@@ -3,7 +3,7 @@
 ## The idea
 The q-gram phase (`circular_sequence_comparison`) is O(n^2 m^1.5): it computes a
 distance AND a rotation for every pair. Both outputs are needed, but:
-- **Distances** are guide-tree fodder, which is quality-tolerant (see FINDINGS.md).
+- **Distances** are guide-tree fodder, which is quality-tolerant (see mbed_investigation.md).
 - **Rotations** are essential, BUT the n^2 pairwise rotations are redundant: they are
   determined by **n absolute frame positions**. Deriving `rot[i][j]` from references
   matches the true pairwise rotation within ~7 bp (0.3% of length).
