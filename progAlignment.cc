@@ -472,8 +472,38 @@ unsigned int progAlignment(TPOcc ** D, unsigned char ** seq, TGraph njTree, stru
 	
 		int ** TBl;
 		double * SMl, ** PMl, * IMl, * DMl;
+		double _t_dp;
 
 		double _tf = gettime ();
+#if !defined(MARS_NO_SIMD_DP)
+		/* SIMD final DP (Tier 3b-hard): skip the big row-major TBl; build the
+		   contiguous anti-diag-major TBlin via the engine, then linear traceback.
+		   Removes the per-cell TB scatter that dominated runtime. */
+		if( sw . U != sw . V )
+			alignAllocation_ag( PMl, SMl, IMl, DMl, TBl, characters, profileA, profileB, sw, 0 );
+		else
+			alignAllocation( PMl, SMl, TBl, characters, profileA, profileB, sw, 0 );
+		{
+			int sigma = characters->size();
+			int pBsize = profileB->size();
+			double invB = ( pBsize > 0 ) ? 1.0 / pBsize : 0.0;
+			double * colScore = ( double * ) malloc ( ( size_t ) ( n + 1 ) * sigma * sizeof ( double ) );
+			for ( int j = 1; j <= n; j++ )
+				for ( int l = 0; l < sigma; l++ )
+				{
+					double s = 0; unsigned char cl = characters->at ( l );
+					for ( int k = 0; k < pBsize; k++ ) s += similarity ( profileB->at ( k )[j-1], cl, sw );
+					colScore[ ( size_t ) j * sigma + l ] = s * invB;
+				}
+			int * TBlin = ( int * ) malloc ( ( size_t ) ( m + 1 ) * ( n + 1 ) * sizeof ( int ) );
+			int * off   = ( int * ) malloc ( ( size_t ) ( m + n + 2 ) * sizeof ( int ) );
+			double smn = gotohAg_simd ( PMl, colScore, m, n, sigma, sw . U, sw . V, TBlin, off, 1 );
+			if ( smn > score ) { rotation = 0; score = smn; }
+			free ( colScore );
+			alignSequences_lin ( profileA, profileB, profileAPos, profileBPos, sequences, TBlin, off );
+			free ( TBlin ); free ( off );
+		}
+#else
 		if( sw . U != sw . V )
 			alignAllocation_ag( PMl, SMl, IMl, DMl, TBl, characters, profileA, profileB, sw );
 		else alignAllocation( PMl, SMl, TBl, characters, profileA, profileB, sw );
@@ -482,28 +512,26 @@ unsigned int progAlignment(TPOcc ** D, unsigned char ** seq, TGraph njTree, stru
 		if( sw . U != sw . V )
 			alignmentScore_ag( profileA, profileB, &score, sw, 0, &rotation, TBl, SMl, PMl, IMl, DMl, characters, 1);
 		else alignmentScore( profileA, profileB, &score, sw, 0, &rotation,  TBl, SMl, PMl, characters, 1);
-		double _t_dp = gettime () - _tf;
+		alignSequences( profileA, profileB, profileAPos, profileBPos, sequences , TBl);
+#endif
+		_t_dp = gettime () - _tf;
+		#pragma omp atomic
+		_t_fin += _t_dp;
+		#pragma omp atomic
+		_t_dp_all += _t_dp;
 
+		/* free profile-matrix workspace (common to both paths) */
 		for(int i=0; i<m; i++)
 			free( PMl[i] );
 		characters->clear();
-
-		if( sw . U != sw . V )
-		{
-			free( IMl );
-			free( DMl );
-		}
+		if( sw . U != sw . V ) { free( IMl ); free( DMl ); }
 		free( PMl );
 		free( SMl );
-
-		double _tt = gettime ();
-		alignSequences( profileA, profileB, profileAPos, profileBPos, sequences , TBl); // find the best alignment for sequences
-		#pragma omp atomic
-		_t_fin += gettime () - _tf;
-		#pragma omp atomic
-		_t_dp_all += _t_dp;
-		#pragma omp atomic
-		_t_trace += gettime () - _tt;
+#if defined(MARS_NO_SIMD_DP)
+		for(int i=0; i<m+ 1; i++)
+			free( TBl[i] );
+		free( TBl );
+#endif
 
 			//free arrays 
 			for(int i=0; i<profileBPos->size(); i++)
@@ -514,11 +542,6 @@ unsigned int progAlignment(TPOcc ** D, unsigned char ** seq, TGraph njTree, stru
 			profileB->clear();
 			profileAPos->clear();
 			profileBPos->clear();
-
-			for(int i=0; i<m+ 1; i++)
-				free( TBl[i] );
-			
-			free( TBl );
 		}
 	} /* end node body */
 
@@ -661,8 +684,87 @@ unsigned int alignSequences(vector<unsigned char *> * profileA, vector<unsigned 
 return 1;
 }
 
+/* Traceback reading the contiguous anti-diagonal-major TBlin (Tier 3b-hard),
+   instead of the scattered row-major TB. Identical logic to alignSequences
+   except the cell lookup goes through the linear accessor. Cell (i,j) with
+   k=i+j lives at TBlin[ off[k] + i - max(0,k-n) ]. */
+unsigned int alignSequences_lin(vector<unsigned char *> * profileA, vector<unsigned char *> * profileB, vector<int> * profileAPos, vector<int> * profileBPos, unsigned char ** sequences, int * TBlin, int * off)
+{
+	int m = strlen( ( char * ) profileA->at(0) );
+	int n = strlen( ( char * ) profileB->at(0) );
 
-unsigned int alignAllocation( double ** &PM, double * &SM, int ** &TB, vector<char> * characters, vector<unsigned char*> * profileA, vector<unsigned char*> * profileB, struct TSwitch sw)
+	int seqP = 0;
+	int seqS = 0;
+
+	vector< vector <unsigned char> > * ASequences = new vector< vector<unsigned char> >( profileA->size() );
+	vector< vector <unsigned char> > * BSequences = new vector< vector<unsigned char> >( profileB->size() );
+
+	int dirI = m;
+	int dirJ = n;
+	int i = m;
+	int j = n;
+
+	while ( dirI != 0 || dirJ != 0 )
+	{
+		int k = dirI + dirJ;
+		int ilo = ( k - n > 0 ) ? k - n : 0;
+		int tb = TBlin[ off[k] + ( dirI - ilo ) ];
+
+		if( tb == 0 )
+		{
+			for(int k2=0; k2<profileAPos->size(); k2++)
+				ASequences->at( k2 ).insert( ASequences->at( k2 ).begin() + seqP , profileA->at( k2 )[ i-1 ] );
+			for(int l=0; l<profileBPos->size(); l++ )
+				BSequences->at( l ).insert( BSequences->at( l ).begin() + seqS , profileB->at( l )[ j-1 ] );
+			seqP++; seqS++;
+			i--;  j--;
+			dirI = dirI-1; dirJ=dirJ-1;
+		}
+		else if( tb == 1 )
+		{
+			for(int k2=0; k2<profileAPos->size(); k2++)
+				ASequences->at( k2 ).insert( ASequences->at( k2 ).begin() + seqP , profileA->at( k2 )[ i-1 ] );
+			for(int l=0; l<profileB->size(); l++)
+				BSequences->at( l ).insert( BSequences->at( l ).begin() + seqS , GAP );
+			seqP++; seqS++;
+			i--;
+			dirI = dirI-1; dirJ=dirJ;
+		}
+		else /* tb == -1 */
+		{
+			for(int k2=0; k2<profileAPos->size(); k2++)
+				ASequences->at( k2 ).insert( ASequences->at( k2 ).begin() + seqP , GAP );
+			for(int l=0; l<profileBPos->size(); l++ )
+				BSequences->at( l ).insert( BSequences->at( l ).begin() + seqS , profileB->at( l )[ j-1 ] );
+			seqP++; seqS++;
+			j--;
+			dirI = dirI; dirJ=dirJ-1;
+		}
+	}
+
+	for(int a=0; a<profileA->size(); a++)
+	{
+		free( sequences[ profileAPos->at(a) ] );
+		sequences[ profileAPos->at(a) ] = ( unsigned char * ) calloc( ( seqP + 1 ) , sizeof( unsigned char  ) );
+		int kk = seqP-1;
+		for(int i2=0; i2<seqP; i2++) { sequences[profileAPos->at(a)][i2] = ASequences->at( a ).at( kk ); kk--; }
+		sequences[ profileAPos->at(a) ][ seqP ] = '\0';
+	}
+	for(int b=0; b<profileB->size(); b++)
+	{
+		free( sequences[ profileBPos->at(b) ] );
+		sequences[ profileBPos->at(b) ] = ( unsigned char * ) calloc( ( seqS + 1 ) , sizeof( unsigned char  ) );
+		int ll = seqS-1;
+		for(int j2=0; j2<seqS; j2++) { sequences[ profileBPos->at(b)][j2] = BSequences->at( b ).at( ll ); ll--; }
+		sequences[ profileBPos->at(b)][ seqS] = '\0';
+	}
+
+	delete( ASequences );
+	delete( BSequences );
+return 1;
+}
+
+unsigned int alignAllocation( double ** &PM, double * &SM, int ** &TB, vector<char> * characters, vector<unsigned char*> * profileA, vector<unsigned char*> * profileB, struct TSwitch sw, int allocTB)
 {
 	
 	int m = strlen( ( char * ) profileA->at(0) );
@@ -682,6 +784,8 @@ unsigned int alignAllocation( double ** &PM, double * &SM, int ** &TB, vector<ch
 	}
 
 	
+	if ( allocTB )
+	{
 	if ( ( TB = ( int ** ) calloc ( ( m + 1 ) , sizeof( int * ) ) ) == NULL )
 	{
 		fprintf( stderr, " Error: TB could not be allocated!\n");
@@ -695,6 +799,8 @@ unsigned int alignAllocation( double ** &PM, double * &SM, int ** &TB, vector<ch
 		  	return ( 0 );
 		}
 	}
+	}
+	else TB = NULL;
 		 
 	//probability matrix  (transposed: m rows x sigma cols, so each DP column's
 	// character-probability vector is contiguous -> SIMD-friendly dot product)
@@ -723,12 +829,15 @@ unsigned int alignAllocation( double ** &PM, double * &SM, int ** &TB, vector<ch
 
 
 
+	if ( allocTB )
+	{
 	TB[0][0] = 0;
 	for(int i=1; i<m+1; i++)
 		TB[i][0] = 1;
           	
          for(int j=1; j<n+1; j++)
 		TB[0][j] = -1;
+	}
 
 	SM[0] = 0;
 
@@ -1139,7 +1248,7 @@ unsigned int alignPairs_ag(vector<unsigned char *> * profileA, vector<unsigned c
 return 1;
 }
 
-unsigned int alignAllocation_ag( double ** &PM, double * &SM, double * &IM, double * &DM, int ** &TB, vector<char> * characters, vector<unsigned char*> * profileA, vector<unsigned char*> * profileB, struct TSwitch sw )
+unsigned int alignAllocation_ag( double ** &PM, double * &SM, double * &IM, double * &DM, int ** &TB, vector<char> * characters, vector<unsigned char*> * profileA, vector<unsigned char*> * profileB, struct TSwitch sw, int allocTB )
 {
 	
 	int m = strlen( ( char * ) profileA->at(0) );
@@ -1158,6 +1267,8 @@ unsigned int alignAllocation_ag( double ** &PM, double * &SM, double * &IM, doub
 		}
 	}
 
+	if ( allocTB )
+	{
 	if ( ( TB = ( int ** ) calloc ( ( m + 1 ) , sizeof( int * ) ) ) == NULL )
 	{
 		fprintf( stderr, " Error: TB could not be allocated!\n");
@@ -1171,6 +1282,8 @@ unsigned int alignAllocation_ag( double ** &PM, double * &SM, double * &IM, doub
 			return ( 0 );
 		}
 	}
+	}
+	else TB = NULL;
 			 
 	//probability matrix (transposed: m rows x sigma cols for contiguous dot product)
 	if ( ( PM = ( double ** ) calloc ( ( m ) , sizeof( double * ) ) ) == NULL )
@@ -1221,12 +1334,15 @@ unsigned int alignAllocation_ag( double ** &PM, double * &SM, double * &IM, doub
 		IM[i] = m * -1;
 	}
 
+	if ( allocTB )
+	{
 	TB[0][0] = 0;
 	for(int i=1; i<m+1; i++)
 		TB[i][0] = 1;
-         	
+          	
         for(int j=1; j<n+1; j++)
 		TB[0][j] = -1;
+	}
 
 	SM[0] = 0;
 
@@ -1279,7 +1395,12 @@ unsigned int alignmentScore_ag(vector<unsigned char *> * profileA, vector<unsign
 #if defined(MARS_NO_SIMD_DP)
 	double smn = gotohAg_scalar ( PM, colScore, m, n, sigma, sw . U, sw . V, TB, calculate_TB );
 #else
-	double smn = gotohAg_simd   ( PM, colScore, m, n, sigma, sw . U, sw . V, TB, calculate_TB );
+	/* SIMD: used here only for the score-only rotation search (calculate_TB==0).
+	   If a caller requests TB in a SIMD build, fall back to the scalar oracle
+	   (the production final-DP path uses finalDpSimd + the linear TB layout). */
+	double smn = calculate_TB
+		? gotohAg_scalar ( PM, colScore, m, n, sigma, sw . U, sw . V, TB, 1 )
+		: gotohAg_simd   ( PM, colScore, m, n, sigma, sw . U, sw . V, NULL, NULL, 0 );
 #endif
 
 	if( smn > (*score) )

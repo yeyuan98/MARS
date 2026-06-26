@@ -25,18 +25,24 @@
      m, n      : profile-A / profile-B lengths (>= 1)
      sigma     : number of distinct characters
      U, V      : gap-open / gap-extend penalties (negative)
-     TB        : if wantTB, int matrix TB[i][j] (i=0..m, j=0..n) filled with the
-                 argmax case: 0 = diagonal, 1 = up(DM), -1 = left(IM); ignored
-                 when wantTB == 0 (pass NULL)
-   The returned score is SM[m][n]; the recurrence is identical to the scalar
-   alignmentScore_ag kernel (verified by differential testing). */
+   Traceback (SIMD engine): when wantTB, the argmax case is written to TBlin in a
+   CONTIGUOUS anti-diagonal-major layout (cell (i,j) at TBlin[ off[i+j] + i -
+   max(0,i+j-n) ]), which keeps writes streaming during the anti-diag sweep
+   (avoids the scattered row-major store that otherwise dominated runtime). off[]
+   is filled by the function (size m+n+2, caller-allocated). Ignored when
+   wantTB == 0 (pass NULL). The scalar oracle instead writes row-major TB[i][j]. */
 double gotohAg_simd( double ** PM, double * colScore, int m, int n, int sigma,
-                     double U, double V, int ** TB, int wantTB );
+                     double U, double V, int * TBlin, int * off, int wantTB );
 
 /* Scalar reference implementation (exact copy of the alignmentScore_ag kernel).
-   Always available; used as the oracle in differential tests and as the
-   fallback when SIMD is disabled. */
+   Writes row-major TB[i][j] when wantTB. Always available; used as the oracle in
+   differential tests and as the fallback when SIMD is disabled. */
 double gotohAg_scalar( double ** PM, double * colScore, int m, int n, int sigma,
                        double U, double V, int ** TB, int wantTB );
+
+/* Pack row-major TB[m+1][n+1] into the contiguous anti-diagonal-major TBlin
+   layout and fill off[] (off[k] = start index of anti-diagonal k; cell (i,j)
+   with i+j=k at TBlin[ off[k] + i - max(0,k-n) ]). Defines the layout. */
+void gotohAg_pack_lin ( int ** TB, int m, int n, int * TBlin, int * off );
 
 #endif /* SIMD_DP_H */

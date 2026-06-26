@@ -84,6 +84,23 @@ double gotohAg_scalar( double ** PM, double * colScore, int m, int n, int sigma,
 	return score;
 }
 
+/* Pack a row-major TB[m+1][n+1] into the contiguous anti-diagonal-major TBlin
+   layout used by the SIMD engine, and fill off[] (off[k] = start index of
+   anti-diagonal k; cell (i,j) with i+j=k is at TBlin[ off[k] + i - ilo_k ],
+   ilo_k = max(0, k-n)). Also the precise definition of the layout. */
+void gotohAg_pack_lin ( int ** TB, int m, int n, int * TBlin, int * off )
+{
+	off[0] = 0;
+	for ( int k = 0; k <= m + n; k++ )
+	{
+		int ilo = ( k - n > 0 ) ? k - n : 0;
+		int ihi = ( k < m ) ? k : m;
+		for ( int i = ilo; i <= ihi; i++ )
+			TBlin[ off[k] + ( i - ilo ) ] = TB[i][k-i];
+		off[k+1] = off[k] + ( ihi - ilo + 1 );
+	}
+}
+
 /* ----------------------------------------------------------------------- */
 /* SIMD (anti-diagonal) implementation.                                    */
 /* ----------------------------------------------------------------------- */
@@ -91,12 +108,25 @@ double gotohAg_scalar( double ** PM, double * colScore, int m, int n, int sigma,
 
 #define SIMDE_ENABLE_NATIVE_ALIASES
 #include <simde/x86/avx.h>
+#include <simde/x86/sse2.h>
 
 double gotohAg_simd( double ** PM, double * colScore, int m, int n, int sigma,
-                     double U, double V, int ** TB, int wantTB )
+                     double U, double V, int * TBlin, int * off, int wantTB )
 {
 #ifndef __AVX2__
-	return gotohAg_scalar ( PM, colScore, m, n, sigma, U, V, TB, wantTB );
+	/* no AVX2: emulate via scalar oracle into a temp row-major TB, then pack to
+	   TBlin so the linear-traceback path still works on non-AVX2 builds. */
+	if ( wantTB )
+	{
+		int ** TB = ( int ** ) malloc ( ( m + 1 ) * sizeof ( int * ) );
+		for ( int i = 0; i <= m; i++ ) TB[i] = ( int * ) malloc ( ( n + 1 ) * sizeof ( int ) );
+		double s = gotohAg_scalar ( PM, colScore, m, n, sigma, U, V, TB, 1 );
+		gotohAg_pack_lin ( TB, m, n, TBlin, off );
+		for ( int i = 0; i <= m; i++ ) free ( TB[i] );
+		free ( TB );
+		return s;
+	}
+	return gotohAg_scalar ( PM, colScore, m, n, sigma, U, V, NULL, 0 );
 #else
 	if ( m <= 0 || n <= 0 )
 	{
@@ -106,6 +136,18 @@ double gotohAg_simd( double ** PM, double * colScore, int m, int n, int sigma,
 	}
 
 	const int P = 4;	/* AVX2 doubles per vector */
+
+	/* anti-diagonal offsets for the contiguous TBlin layout */
+	if ( wantTB )
+	{
+		off[0] = 0;
+		for ( int k = 0; k <= m + n; k++ )
+		{
+			int ilo = ( k - n > 0 ) ? k - n : 0;
+			int ihi = ( k < m ) ? k : m;
+			off[k+1] = off[k] + ( ihi - ilo + 1 );
+		}
+	}
 
 	/* char-major transposes so each SIMD lane reads a contiguous run. */
 	double * PMt   = ( double * ) malloc ( ( size_t ) sigma * m * sizeof ( double ) );
@@ -145,6 +187,7 @@ double gotohAg_simd( double ** PM, double * colScore, int m, int n, int sigma,
 			SM_c[0] = ( j == 0 ) ? 0.0 : ( U + V * ( j - 1 ) );
 			DM_c[0] = ( double ) n * -1.0;
 			IM_c[0] = ( double ) m * -1.0;
+			if ( wantTB ) TBlin[ off[k] + ( 0 - ilo ) ] = ( j == 0 ) ? 0 : -1;
 		}
 		/* left-column boundary cell j=0 (if present) */
 		if ( ihi > i_end )
@@ -153,6 +196,7 @@ double gotohAg_simd( double ** PM, double * colScore, int m, int n, int sigma,
 			SM_c[i] = ( i == 0 ) ? 0.0 : ( U + V * ( i - 1 ) );
 			DM_c[i] = ( double ) n * -1.0;
 			IM_c[i] = ( double ) m * -1.0;
+			if ( wantTB ) TBlin[ off[k] + ( i - ilo ) ] = ( i == 0 ) ? 0 : 1;
 		}
 
 		/* SIMD chunks over the interior run */
@@ -182,18 +226,14 @@ double gotohAg_simd( double ** PM, double * colScore, int m, int n, int sigma,
 
 			if ( wantTB )
 			{
-				double sa[4], da[4], ua[4], la[4];
-				simde_mm256_storeu_pd ( sa, vSM );
-				simde_mm256_storeu_pd ( da, vDiag );
-				simde_mm256_storeu_pd ( ua, vUp );
-				simde_mm256_storeu_pd ( la, vLeft );
-				for ( int t = 0; t < P; t++ )
-				{
-					int ii = i + t, jj = k - ii;
-					if ( sa[t] == da[t] ) TB[ii][jj] = 0;
-					else if ( sa[t] == la[t] ) TB[ii][jj] = -1;
-					else TB[ii][jj] = 1;
-				}
+				/* fully-SIMD argmax: diag(0) > left(-1) > up(1) precedence, no
+				   scalar extracts (keeps the SIMD recurrence pipelined). */
+				int base = off[k] + ( i - ilo );
+				simde__m256d mD = simde_mm256_cmp_pd ( vSM, vDiag, _CMP_EQ_UQ );
+				simde__m256d mL = simde_mm256_andnot_pd ( mD, simde_mm256_cmp_pd ( vSM, vLeft, _CMP_EQ_UQ ) );
+				simde__m256d tmp = simde_mm256_blendv_pd ( simde_mm256_set1_pd ( 1.0 ), simde_mm256_set1_pd ( -1.0 ), mL );
+				simde__m256d vTB = simde_mm256_blendv_pd ( tmp, simde_mm256_set1_pd ( 0.0 ), mD );
+				simde_mm_storeu_si128 ( ( simde__m128i * ) &TBlin[ base ], simde_mm256_cvtpd_epi32 ( vTB ) );
 			}
 		}
 
@@ -210,9 +250,9 @@ double gotohAg_simd( double ** PM, double * colScore, int m, int n, int sigma,
 			SM_c[i] = sm; DM_c[i] = up; IM_c[i] = left;
 			if ( wantTB )
 			{
-				if ( sm == diag ) TB[i][j] = 0;
-				else if ( sm == left ) TB[i][j] = -1;
-				else TB[i][j] = 1;
+				if ( sm == diag ) TBlin[ off[k] + ( i - ilo ) ] = 0;
+				else if ( sm == left ) TBlin[ off[k] + ( i - ilo ) ] = -1;
+				else TBlin[ off[k] + ( i - ilo ) ] = 1;
 			}
 		}
 
@@ -234,9 +274,19 @@ double gotohAg_simd( double ** PM, double * colScore, int m, int n, int sigma,
 #else /* MARS_NO_SIMD_DP */
 
 double gotohAg_simd( double ** PM, double * colScore, int m, int n, int sigma,
-                     double U, double V, int ** TB, int wantTB )
+                     double U, double V, int * TBlin, int * off, int wantTB )
 {
-	return gotohAg_scalar ( PM, colScore, m, n, sigma, U, V, TB, wantTB );
+	if ( wantTB )
+	{
+		int ** TB = ( int ** ) malloc ( ( m + 1 ) * sizeof ( int * ) );
+		for ( int i = 0; i <= m; i++ ) TB[i] = ( int * ) malloc ( ( n + 1 ) * sizeof ( int ) );
+		double s = gotohAg_scalar ( PM, colScore, m, n, sigma, U, V, TB, 1 );
+		gotohAg_pack_lin ( TB, m, n, TBlin, off );
+		for ( int i = 0; i <= m; i++ ) free ( TB[i] );
+		free ( TB );
+		return s;
+	}
+	return gotohAg_scalar ( PM, colScore, m, n, sigma, U, V, NULL, 0 );
 }
 
 #endif

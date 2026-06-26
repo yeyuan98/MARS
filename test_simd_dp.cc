@@ -39,19 +39,31 @@ int main()
 		double * colScore = (double*) malloc ( ( size_t )( n + 1 ) * sigma * sizeof(double) );
 		for ( int j = 1; j <= n; j++ ) for ( int l=0;l<sigma;l++ ) colScore[( size_t )j*sigma+l] = rnd()*5.0;
 
-		int ** TBs = newTB(m,n), ** TBv = newTB(m,n);
+		int ** TBs = newTB(m,n);
+		int * TBlin = (int*) malloc ( ( size_t )( m + 1 ) * ( n + 1 ) * sizeof ( int ) );
+		int * off   = (int*) malloc ( ( size_t )( m + n + 2 ) * sizeof ( int ) );
 		for ( int wtb = 0; wtb <= 1; wtb++ )
 		{
 			double ss = gotohAg_scalar( PM, colScore, m, n, sigma, U, V, TBs, wtb );
-			double sv = gotohAg_simd  ( PM, colScore, m, n, sigma, U, V, TBv, wtb );
+			double sv = gotohAg_simd  ( PM, colScore, m, n, sigma, U, V, wtb ? TBlin : NULL, off, wtb );
 			tests++;
 			int bad = 0;
 			if ( ss != sv ) { bad = 1; }
-			if ( wtb )
+			if ( wtb && !bad )
 			{
-				for ( int i = 1; i <= m && !bad; i++ )
-					for ( int j = 1; j <= n; j++ )
-						if ( TBs[i][j] != TBv[i][j] ) { bad = 2; break; }
+				/* the scalar oracle fills only interior TB; set the boundary
+				   constants it omits (mirrors alignAllocation) before comparing. */
+				TBs[0][0] = 0;
+				for ( int i = 1; i <= m; i++ ) TBs[i][0] = 1;
+				for ( int j = 1; j <= n; j++ ) TBs[0][j] = -1;
+				/* compare scalar row-major TBs[i][j] vs SIMD TBlin anti-diag layout */
+				for ( int i = 0; i <= m && !bad; i++ )
+					for ( int j = 0; j <= n; j++ )
+					{
+						int k = i + j, ilo = ( k - n > 0 ) ? k - n : 0;
+						int v = TBlin[ off[k] + ( i - ilo ) ];
+						if ( TBs[i][j] != v ) { bad = 2; break; }
+					}
 			}
 			if ( bad )
 			{
@@ -61,7 +73,7 @@ int main()
 						m,n,sigma,U,V,wtb,ss,sv, bad==1?"score":"TB");
 			}
 		}
-		freeTB(TBs,m); freeTB(TBv,m);
+		freeTB(TBs,m); free(TBlin); free(off);
 		for ( int i = 0; i < m; i++ ) free(PM[i]); free(PM); free(colScore);
 	}
 	fprintf(stderr, "\n%d / %d tests passed (%d failed)\n", tests - fails, tests, fails);

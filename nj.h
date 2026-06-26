@@ -34,11 +34,13 @@ unsigned int alignmentScore_ag(vector<unsigned char *> * profileA, vector<unsign
 
 unsigned int alignSequences(vector<unsigned char *> * profileA, vector<unsigned char *> * profileB, vector<int> * profileAPos, vector<int> * profileBPos, unsigned char ** sequences, int ** &TB);
 
+unsigned int alignSequences_lin(vector<unsigned char *> * profileA, vector<unsigned char *> * profileB, vector<int> * profileAPos, vector<int> * profileBPos, unsigned char ** sequences, int * TBlin, int * off);
+
 double probScore( vector<char> * characters,  int i, int j, double ** PM, vector<unsigned char *> * profileA, vector<unsigned char *> * profileB, struct TSwitch sw );
 
-unsigned int alignAllocation_ag( double ** &PM, double * &SM, double * &IM, double * &DM, int ** &TB, vector<char> * characters, vector<unsigned char*> * profileA, vector<unsigned char*> * profileB, struct TSwitch sw );
+unsigned int alignAllocation_ag( double ** &PM, double * &SM, double * &IM, double * &DM, int ** &TB, vector<char> * characters, vector<unsigned char*> * profileA, vector<unsigned char*> * profileB, struct TSwitch sw, int allocTB = 1 );
 
-unsigned int alignAllocation( double ** &PM, double * &SM, int ** &TB, vector<char> * characters, vector<unsigned char*> * profileA, vector<unsigned char*> * profileB,  struct TSwitch sw);
+unsigned int alignAllocation( double ** &PM, double * &SM, int ** &TB, vector<char> * characters, vector<unsigned char*> * profileA, vector<unsigned char*> * profileB,  struct TSwitch sw, int allocTB = 1);
 
 int similarity( unsigned char x, unsigned char y, struct TSwitch sw);
 
