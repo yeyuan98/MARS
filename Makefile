@@ -8,9 +8,24 @@ CFLAGS= -g -D_USE_OMP -O3 -fomit-frame-pointer -funroll-loops -pthread -I ./simd
 # build the scalar fallback only (for CPUs without AVX2).
 ifeq ($(NOAVX),)
     SIMD_FLAGS := -mavx2 -mfma
+    SIMD_MODE  := AVX2
 else
     SIMD_FLAGS := -DMARS_NO_SIMD_DP
+    SIMD_MODE  := NOAVX
 endif
+
+# A plain `make` after `make NOAVX=1` (or vice-versa) must not link a stale
+# simd_dp.o: Make tracks timestamps, not flags, so it would otherwise skip
+# recompilation. We record the mode in .simd_mode and, if it changed since the
+# last build, purge every object so the whole tree rebuilds in the new mode.
+_simd_switch := $(shell \
+  if [ -f .simd_mode ] && [ "$$(cat .simd_mode)" = "$(SIMD_MODE)" ]; then \
+    :; \
+  else \
+    printf '%s\n' "$(SIMD_MODE)" > .simd_mode; \
+    find . -maxdepth 1 -name '*.o' -delete; \
+    echo "  [SIMD mode -> $(SIMD_MODE); flag changed since last build: forcing full rebuild]" >&2; \
+  fi)
 
 # Detect OS for platform-specific settings
 UNAME_S := $(shell uname -s)
@@ -63,9 +78,9 @@ $(EXE): $(OBJ)
 $(OBJ): $(MF) $(HD) 
  
 clean: 
-	rm -f $(OBJ) $(EXE) *~
+	rm -f $(OBJ) $(EXE) *~ .simd_mode
 
 clean-all: 
-	rm -f $(OBJ) $(EXE) *~
+	rm -f $(OBJ) $(EXE) *~ .simd_mode
 	rm -r libsdsl
 	rm -r sdsl-lite

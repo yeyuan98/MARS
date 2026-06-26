@@ -1,4 +1,5 @@
 *.o
+.simd_mode
 libsdsl/
 sdsl-lite/
 seqan/
