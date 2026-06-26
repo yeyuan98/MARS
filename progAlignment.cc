@@ -29,11 +29,12 @@
 #include "sacsc.h"
 #include "nj.h"
 #include <array>
+#include <functional>
 
 
 using namespace std;
 
-unsigned int progAlignment(TPOcc ** D, unsigned char ** seq, TGraph njTree, struct TSwitch  sw, int * Rot, vector<array<int, 2>> * branchingOrder, unsigned int num_seqs )
+unsigned int progAlignment(TPOcc ** D, unsigned char ** seq, TGraph njTree, struct TSwitch  sw, int * Rot, vector<array<int, 2>> * branchingOrder, vector<int> * branchingOrderSrc, unsigned int num_seqs )
 {
 	double _t_rot = 0.0, _t_fin = 0.0, _t_dp_all = 0.0, _t_trace = 0.0;
 	int * R = ( int * ) calloc ( num_seqs , sizeof ( int ) );
@@ -45,37 +46,71 @@ unsigned int progAlignment(TPOcc ** D, unsigned char ** seq, TGraph njTree, stru
                 return ( 0 );
         }
 
-	vector<unsigned char * > * profileA = new vector<unsigned char *>();
-	vector<unsigned char * > * profileB = new vector<unsigned char *>();
+	/* Build a vertex -> branchingOrder-index map so the progressive-alignment
+	   traversal can recurse over the guide tree. Leaves are unmapped (-1). */
+	int nInternal = branchingOrder->size();
+	int maxv = num_seqs - 1;
+	for ( int i = 0; i < nInternal; i++ )
+		if ( branchingOrderSrc->at(i) > maxv ) maxv = branchingOrderSrc->at(i);
+	std::vector<int> vertexToOrder( maxv + 1, -1 );
+	for ( int i = 0; i < nInternal; i++ )
+		vertexToOrder[ branchingOrderSrc->at(i) ] = i;
+	int rootIndex = nInternal - 1;  /* post-order: last entry is the root */
 
-	vector<char> * characters = new vector<char>();
+	/* Recursive progressive alignment over the guide tree. Independent sibling
+	   subtrees are processed concurrently via OpenMP tasks + taskwait (this is
+	   safe: every node only reads/writes its own subtree's sequences[] entries,
+	   and a node starts only after both children complete). Scratch vectors are
+	   local to each invocation, so concurrent nodes never share them. */
+	std::function<void(int)> process = [&](int ni)
+	{
+		array<int,2> children = branchingOrder->at(ni);
+		int c0 = children[0], c1 = children[1];
+		int d0 = (c0 >= 0 && c0 <= maxv) ? vertexToOrder[c0] : -1;
+		int d1 = (c1 >= 0 && c1 <= maxv) ? vertexToOrder[c1] : -1;
 
-	vector<int> * profileAPos = new vector<int>();
-	vector<int> * profileBPos = new vector<int>();
-	
-	for( int i=0; i<branchingOrder->size(); i++ ) //traverse through all nodes in tree
-	{	
-		array<int , 2> children;
-		children = branchingOrder->at(i); // child at each node
-
-		if( isLeaf( njTree, children[0] ) == 1 && isLeaf( njTree, children[1] ) == 1 ) // two sequences
+		if ( d0 >= 0 )
 		{
-			int m = strlen( ( char * ) seq[ children[0] ] );
-			int n = strlen( ( char * ) seq[ children[1] ] );
+			#pragma omp task firstprivate(d0)
+			process( d0 );
+		}
+		if ( d1 >= 0 )
+		{
+			#pragma omp task firstprivate(d1)
+			process( d1 );
+		}
+		#pragma omp taskwait
 
-			R[ children[0] ] = D[ children[0] ][ children[1] ] . rot; // obtain first rotation for two sequences (already refined)
+		/* Per-node scratch (same names as the original loop locals; kept as
+		   pointers so the unchanged body below compiles verbatim). */
+		vector<unsigned char * > * profileA = new vector<unsigned char *>();
+		vector<unsigned char * > * profileB = new vector<unsigned char *>();
+		vector<char> * characters = new vector<char>();
+		vector<int> * profileAPos = new vector<int>();
+		vector<int> * profileBPos = new vector<int>();
 
-			Rot[ children[0] ] =  D[ children[0] ][ children[1] ] . rot; // Accumulated rotation array
+		{ /* begin node body (was: for-loop iteration) */
+		array<int , 2> childnodes;
+		childnodes = branchingOrder->at(ni);
+
+		if( isLeaf( njTree, childnodes[0] ) == 1 && isLeaf( njTree, childnodes[1] ) == 1 ) // two sequences
+		{
+			int m = strlen( ( char * ) seq[ childnodes[0] ] );
+			int n = strlen( ( char * ) seq[ childnodes[1] ] );
+
+			R[ childnodes[0] ] = D[ childnodes[0] ][ childnodes[1] ] . rot; // obtain first rotation for two sequences (already refined)
+
+			Rot[ childnodes[0] ] =  D[ childnodes[0] ][ childnodes[1] ] . rot; // Accumulated rotation array
 
 			unsigned char * rotatedSeq = ( unsigned char * ) calloc( ( m + 1 ) , sizeof( unsigned char ) );
 
-			create_rotation( seq[ children[0] ] , R[ children[0] ], rotatedSeq );
+			create_rotation( seq[ childnodes[0] ] , R[ childnodes[0] ], rotatedSeq );
 
 			profileA->push_back( rotatedSeq );
-			profileB->push_back( seq[ children[1] ] );
+			profileB->push_back( seq[ childnodes[1] ] );
 
-	       		profileAPos->push_back( children[0] );
-	       		profileBPos->push_back( children[1] );
+       		profileAPos->push_back( childnodes[0] );
+       		profileBPos->push_back( childnodes[1] );
 			   					
 			int ** TB;
 			double * SM;
@@ -115,24 +150,24 @@ unsigned int progAlignment(TPOcc ** D, unsigned char ** seq, TGraph njTree, stru
 		else 
 		{
 			String<int> leaves0;
-			collectLeaves(njTree, children[0] , leaves0); // find all leaves of child 0
+			collectLeaves(njTree, childnodes[0] , leaves0); // find all leaves of child 0
 
 	    		typedef Iterator<String<int>>::Type TIterator;
 	    		for (TIterator it = begin(leaves0); it != end(leaves0); goNext(it))
 	    		{
-	       			profileAPos->push_back( value(it) );
-	   		}
+       				profileAPos->push_back( value(it) );
+   			}
 
 			String<int> leaves1;
-			collectLeaves(njTree, children[1] , leaves1); // find all leaves of child 1
+			collectLeaves(njTree, childnodes[1] , leaves1); // find all leaves of child 1
 
 	    		typedef Iterator<String<int>>::Type TIterator;
 	    		for (TIterator it2 = begin(leaves1); it2 != end(leaves1); goNext(it2))
 	    		{
-	       			profileBPos->push_back( value(it2) );
-	   		}			
-	   			
-	   		if( profileAPos->size() < profileBPos->size() )
+       				profileBPos->push_back( value(it2) );
+   			}			
+   			
+   			if( profileAPos->size() < profileBPos->size() )
 			{
 				(*profileBPos).swap(*profileAPos); //Profile A will always have largest number of leaves
 			}
@@ -260,39 +295,89 @@ unsigned int progAlignment(TPOcc ** D, unsigned char ** seq, TGraph njTree, stru
 
 				profileB->clear(); // clear profileB so can be re-inserted with refined sequences
 
-			/* Find the best rotation from the refined sequence using DP score */
-			unsigned char ** rotatedSeq = ( unsigned char ** ) calloc( ( profileBPos->size() ) , sizeof( unsigned char * ) );
+		/* Find the best rotation from the refined sequence using DP score.
+		   Candidate rotations are independent -> parallelise across them.
+		   Each thread owns DP scratch (SM/IM/DM are overwritten every call) and
+		   a private profileB vector; PM/characters/profileA are read-only shared,
+		   and TB is never accessed when calculate_TB==0. Deterministic tie-break
+		   (lowest rotation index) reproduces the serial "first max" choice. */
+		int pBsz = profileBPos->size();
+		int ag = ( sw . U != sw . V );
+		double best_score = score;
+		int best_rot = rotation;
 
-			double _ts = gettime ();
-			for(int i=0; i<3*rs; i++ )
-				{
-					if ( i >=rs && i < 2 * rs )
-						continue;
-
-					for(int j = 0; j< profileBPos->size(); j++)
-						rotatedSeq[j] = ( unsigned char * ) calloc( ( 3 * rs + 1 ) , sizeof( unsigned char  ) );
-					
-					for(int j=0; j<profileBPos->size(); j++)
-					{
-						create_rotation( profB[j], i , rotatedSeq[j] );
-						profileB->push_back( rotatedSeq[j] );
-					}
-
-					if( sw . U != sw . V )
-						alignmentScore_ag( profileA, profileB, &score, sw, i, &rotation, TB, SM, PM, IM, DM, characters, 0);
-					else alignmentScore( profileA, profileB, &score, sw, i, &rotation, TB, SM, PM, characters, 0);
-					
-					for(int k = 0; k < profileBPos->size(); k++ )
-						free( rotatedSeq[k] );
-
-				profileB->clear();
+		double _ts = gettime ();
+		#pragma omp parallel
+		{
+			double * SM_p = ( double * ) calloc ( ( 3 * rs + 1 ), sizeof ( double ) );
+			double * IM_p = NULL, * DM_p = NULL;
+			if ( ag )
+			{
+				IM_p = ( double * ) calloc ( ( 3 * rs + 1 ), sizeof ( double ) );
+				DM_p = ( double * ) calloc ( ( 3 * rs + 1 ), sizeof ( double ) );
 			}
-			_t_rot += gettime () - _ts;
-			free( rotatedSeq );			
+			vector<unsigned char *> profileB_p;
+			unsigned char ** rotatedSeq_p = ( unsigned char ** ) calloc ( pBsz, sizeof ( unsigned char * ) );
+			for ( int j = 0; j < pBsz; j++ )
+				rotatedSeq_p[j] = ( unsigned char * ) calloc ( ( 3 * rs + 1 ), sizeof ( unsigned char ) );
+
+			double my_score = INITIAL_SC;
+			int my_rot = 0;
+
+			#pragma omp for schedule(dynamic)
+			for ( int i = 0; i < 3 * rs; i++ )
+			{
+				if ( i >= rs && i < 2 * rs )
+					continue;
+
+				for ( int j = 0; j < pBsz; j++ )
+				{
+					create_rotation( profB[j], i, rotatedSeq_p[j] );
+					profileB_p.push_back( rotatedSeq_p[j] );
+				}
+
+				/* alignmentScore_ag reads DM/IM before overwriting them, so each
+				   rotation must start from the same initial state (n*-1 / m*-1,
+				   matching alignAllocation_ag). This makes every rotation
+				   independent and the result deterministic across thread counts. */
+				if ( ag )
+				{
+					double dinit = ( double ) ( 3 * rs ) * -1.0;
+					for ( int jj = 0; jj <= 3 * rs; jj++ ) { DM_p[jj] = dinit; IM_p[jj] = dinit; }
+				}
+
+				double s = my_score; int r = my_rot;
+				if ( ag )
+					alignmentScore_ag( profileA, &profileB_p, &s, sw, i, &r, TB, SM_p, PM, IM_p, DM_p, characters, 0 );
+				else
+					alignmentScore( profileA, &profileB_p, &s, sw, i, &r, TB, SM_p, PM, characters, 0 );
+
+				my_score = s; my_rot = r;
+				profileB_p.clear();
+			}
+
+			#pragma omp critical
+			{
+				if ( my_score > best_score || ( my_score == best_score && my_rot < best_rot ) )
+				{ best_score = my_score; best_rot = my_rot; }
+			}
+
+			for ( int j = 0; j < pBsz; j++ )
+				free ( rotatedSeq_p[j] );
+			free ( rotatedSeq_p );
+			free ( SM_p );
+			if ( ag ) { free ( IM_p ); free ( DM_p ); }
+		}
+		#pragma omp atomic
+		_t_rot += gettime () - _ts;
+
+		score = best_score;
+		rotation = best_rot;
+
 
 			
 
-				for(int i=0; i<characters->size(); i++)
+				for(int i=0; i<3*rs; i++)
 					free( PM[i] );
 		
 				for(int j=0; j<3 * rs + 1; j++)
@@ -398,7 +483,7 @@ unsigned int progAlignment(TPOcc ** D, unsigned char ** seq, TGraph njTree, stru
 		else alignmentScore( profileA, profileB, &score, sw, 0, &rotation,  TBl, SMl, PMl, characters, 1);
 		double _t_dp = gettime () - _tf;
 
-		for(int i=0; i<characters->size(); i++)
+		for(int i=0; i<m; i++)
 			free( PMl[i] );
 		characters->clear();
 
@@ -412,8 +497,11 @@ unsigned int progAlignment(TPOcc ** D, unsigned char ** seq, TGraph njTree, stru
 
 		double _tt = gettime ();
 		alignSequences( profileA, profileB, profileAPos, profileBPos, sequences , TBl); // find the best alignment for sequences
+		#pragma omp atomic
 		_t_fin += gettime () - _tf;
+		#pragma omp atomic
 		_t_dp_all += _t_dp;
+		#pragma omp atomic
 		_t_trace += gettime () - _tt;
 
 			//free arrays 
@@ -431,13 +519,26 @@ unsigned int progAlignment(TPOcc ** D, unsigned char ** seq, TGraph njTree, stru
 			
 			free( TBl );
 		}
+	} /* end node body */
+
+		delete( profileA );
+		delete( profileB );
+		delete( profileAPos );
+		delete( profileBPos );
+		delete( characters );
+	}; /* end recursive process lambda */
+
+	/* Dispatch the guide-tree traversal: one external team, OpenMP tasks
+	   exploit the independent sibling subtrees (Tier 3a tree parallelism). */
+	if ( nInternal > 0 )
+	{
+		#pragma omp parallel
+		{
+			#pragma omp single
+			process( rootIndex );
+		}
 	}
 
-	delete( profileA );
-	delete( profileB );
-	delete( profileAPos );
-	delete( profileBPos );
-	delete( characters ); 
 	for ( int i = 0; i < num_seqs; i ++ )
 	{
 		free ( sequences[i] );
@@ -593,18 +694,19 @@ unsigned int alignAllocation( double ** &PM, double * &SM, int ** &TB, vector<ch
 		  	return ( 0 );
 		}
 	}
-			 
-	//probability matrix  
-	if ( ( PM = ( double ** ) calloc ( ( characters->size() ) , sizeof( double * ) ) ) == NULL )
+		 
+	//probability matrix  (transposed: m rows x sigma cols, so each DP column's
+	// character-probability vector is contiguous -> SIMD-friendly dot product)
+	if ( ( PM = ( double ** ) calloc ( ( m ) , sizeof( double * ) ) ) == NULL )
    	{
                fprintf( stderr, " Error: PM could not be allocated!\n");
                 return ( 0 );
         }
 
-        for ( int i = 0; i < characters->size(); i ++ )
+        for ( int i = 0; i < m; i ++ )
         {
 		
-                if ( ( PM[i] = ( double * ) calloc ( ( m ) , sizeof( double ) ) ) == NULL )
+                if ( ( PM[i] = ( double * ) calloc ( ( characters->size() ) , sizeof( double ) ) ) == NULL )
                 {
                         fprintf( stderr, " Error: PM could not be allocated!\n");
                         return ( 0 );
@@ -623,7 +725,7 @@ unsigned int alignAllocation( double ** &PM, double * &SM, int ** &TB, vector<ch
 	TB[0][0] = 0;
 	for(int i=1; i<m+1; i++)
 		TB[i][0] = 1;
-         	
+          	
          for(int j=1; j<n+1; j++)
 		TB[0][j] = -1;
 
@@ -636,7 +738,7 @@ unsigned int alignAllocation( double ** &PM, double * &SM, int ** &TB, vector<ch
 		for(int j=0; j<m; j++)
 		{
 			int pos = find(characters->begin(), characters->end(), profileA->at(i)[j]) - characters->begin() ;
-			PM[ pos ][ j ] = PM[ pos ][ j ] + prob;
+			PM[ j ][ pos ] = PM[ j ][ pos ] + prob;
 		}
 	}
 
@@ -693,8 +795,10 @@ unsigned int alignmentScore(vector<unsigned char *> * profileA, vector<unsigned 
 
 			{
 				double ps = 0;
+				const double * pmrow = PM[i-1];
+				#pragma omp simd reduction(+:ps)
 				for ( int l = 0; l < sigma; l++ )
-					ps += PM[l][i-1] * cs[l];
+					ps += pmrow[l] * cs[l];
 				u = prev_diag + ps;
 			}
 			v = SM[i-1] + sw . U; // gap in sequence
@@ -742,7 +846,7 @@ double probScore( vector<char> * characters, int i, int j, double ** PM, vector<
 	{
 		for( int l=0; l<characters->size(); l++)
 		{
-			score = score + ( similarity(  profileB->at(k)[j-1], characters->at(l) , sw ) * PM[l][i-1] ) ; 
+			score = score + ( similarity(  profileB->at(k)[j-1], characters->at(l) , sw ) * PM[i-1][l] ) ; 
 		}
 	}
 
@@ -1067,18 +1171,18 @@ unsigned int alignAllocation_ag( double ** &PM, double * &SM, double * &IM, doub
 		}
 	}
 			 
-	//probability matrix
-	if ( ( PM = ( double ** ) calloc ( ( characters->size() ) , sizeof( double * ) ) ) == NULL )
+	//probability matrix (transposed: m rows x sigma cols for contiguous dot product)
+	if ( ( PM = ( double ** ) calloc ( ( m ) , sizeof( double * ) ) ) == NULL )
    	{
-               fprintf( stderr, " Error: PM could not be allocated!\n");
-               return ( 0 );
+                fprintf( stderr, " Error: PM could not be allocated!\n");
+                return ( 0 );
         }
 
 
-        for ( int i = 0; i < characters->size(); i ++ )
+        for ( int i = 0; i < m; i ++ )
         {
 		
-                if ( ( PM[i] = ( double * ) calloc ( ( m ) , sizeof( double ) ) ) == NULL )
+                if ( ( PM[i] = ( double * ) calloc ( ( characters->size() ) , sizeof( double ) ) ) == NULL )
                 {
                         fprintf( stderr, " Error: PM could not be allocated!\n");
                         return ( 0 );
@@ -1132,7 +1236,7 @@ unsigned int alignAllocation_ag( double ** &PM, double * &SM, double * &IM, doub
 		for(int j=0; j<m; j++)
 		{
 			int pos = find(characters->begin(), characters->end(), profileA->at(i)[j]) - characters->begin() ;
-			PM[ pos ][ j ] = PM[ pos ][ j ] + prob;
+			PM[ j ][ pos ] = PM[ j ][ pos ] + prob;
 		}
 	}
 
@@ -1205,8 +1309,10 @@ unsigned int alignmentScore_ag(vector<unsigned char *> * profileA, vector<unsign
 			{
 				double ps = 0;
 				const double * cs = &colScore[ j * sigma ];
+				const double * pmrow = PM[i-1];
+				#pragma omp simd reduction(+:ps)
 				for ( int l = 0; l < sigma; l++ )
-					ps += PM[l][i-1] * cs[l];
+					ps += pmrow[l] * cs[l];
 				u = prev_diag + ps;
 			}
 			
@@ -1222,18 +1328,21 @@ unsigned int alignmentScore_ag(vector<unsigned char *> * profileA, vector<unsign
 
 			SM[j] = MAX3 ( u, v, w );
 
-			if( SM[j] == u)
+			if ( calculate_TB == 1 )
 			{
-				TB[i][j] = 0;
-				
-			}
-			else if(SM[j] == w )
-			{
-				TB[i][j] = -1;
-			}
-			else if( SM[j] == v )
-			{
-				TB[i][j] = 1;
+				if( SM[j] == u)
+				{
+					TB[i][j] = 0;
+					
+				}
+				else if(SM[j] == w )
+				{
+					TB[i][j] = -1;
+				}
+				else if( SM[j] == v )
+				{
+					TB[i][j] = 1;
+				}
 			}
 
 			if ( i == 1 && j == 1 )

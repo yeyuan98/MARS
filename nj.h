@@ -24,7 +24,7 @@ typedef Graph<Tree<double> > TGraph;
 
 unsigned int nj(TPOcc ** D, unsigned int n,  unsigned char ** seq, struct TSwitch  sw, int * Rot);
 
-unsigned int progAlignment(TPOcc ** D, unsigned char ** seq, TGraph njTree, struct TSwitch  sw, int * Rot, vector<array<int, 2>> * branchingOrder, unsigned int num_seqs );
+unsigned int progAlignment(TPOcc ** D, unsigned char ** seq, TGraph njTree, struct TSwitch  sw, int * Rot, vector<array<int, 2>> * branchingOrder, vector<int> * branchingOrderSrc, unsigned int num_seqs );
 
 unsigned int alignPairs(unsigned char * x, unsigned char * y, struct TSwitch sw, int posX, int posY);
 

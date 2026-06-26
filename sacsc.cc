@@ -149,8 +149,12 @@ unsigned int circular_sequence_comparison (  unsigned char ** seq, struct TSwitc
 		
 	}
 
-	int pos_xx = 0;
-	int pos_y = 0;
+	/* Precompute the global offset of each (doubled) sequence in all_seqs / rank.
+	   This removes the cross-iteration pos_xx/pos_y accumulation so the pairwise
+	   loop below is embarrassingly parallel (each pair writes its own D[i][j]). */
+	INT * seq_off = ( INT * ) calloc ( num_seqs + 1, sizeof ( INT ) );
+	for ( int k = 0; k < ( int ) num_seqs; k++ )
+		seq_off[k + 1] = seq_off[k] + ( INT ) ( 2 * strlen ( ( char * ) seq[k] ) );
 
 	/* qgram-refs mode: pick R evenly-spaced reference sequences. Only (i, ref)
 	   pairs are computed; the rest is derived after the loop. References serve
@@ -170,6 +174,7 @@ unsigned int circular_sequence_comparison (  unsigned char ** seq, struct TSwitc
 		}
 	}
 
+	#pragma omp parallel for schedule(dynamic)
 	for(int i=0; i<num_seqs; i++ )
 	{
 		int m = strlen( ( char * ) seq[i] );
@@ -181,41 +186,35 @@ unsigned int circular_sequence_comparison (  unsigned char ** seq, struct TSwitc
 			b = (int) ( m / sqrt(m) );
 		else b = (int) ( m / sw . l );
 
-		INT * xx = ( INT * ) calloc( ( mm + 1 ) , sizeof( INT ) );
+		INT pos_xx = seq_off[i];
 
+		INT * xx = ( INT * ) calloc( ( mm + 1 ) , sizeof( INT ) );
 
 		memcpy( &xx[0], &rank[pos_xx], mm * sizeof( int ) ); 
 		xx[mm] = '\0';
 
-		int pos_y = 0;
 		for(int j = 0; j<num_seqs; j++)
 		{
 
 			if( j == i )
-			{
-				pos_y =  pos_y + ( 2 * m ); // n = m
 				continue;
-			}
 
 			/* qgram-refs mode: only compute (i, ref) pairs; the rest is derived
 			   after the loop. */
 			if( nrefs > 0 && ! is_ref[j] )
-			{
-				pos_y = pos_y + ( 2 * ( int ) strlen ( ( char * ) seq[j] ) );
 				continue;
-			}
 
 			
 			int n = strlen( ( char * ) seq[j] );
 
 			INT nn = n - q + 1; 
 
+			INT pos_y = seq_off[j];
+
 			INT * y = ( INT * ) calloc( ( nn + 1 ) , sizeof( INT ) );
 
 			memcpy( &y[0], &rank[pos_y], nn * sizeof( int ));
 			y[nn] = '\0';
-
-			pos_y =  pos_y + ( 2 * n );
 			
 			/* Partitioning x' and y' as evenly as possible */
 			INT * xind; 					//this is the starting position of the fragment
@@ -335,10 +334,11 @@ unsigned int circular_sequence_comparison (  unsigned char ** seq, struct TSwitc
 			free ( diff );
 
 		}
-		pos_xx = pos_xx + ( 2 * m );
 
 		free ( xx );
 	}
+
+	free ( seq_off );
 
 	/* qgram-refs derivation. For each pair (i,j):
 	   - rotation = circular median over refs of (a[i][r]-a[j][r]) mod len_i
@@ -347,6 +347,10 @@ unsigned int circular_sequence_comparison (  unsigned char ** seq, struct TSwitc
 	     vectors (D[x][r].err)_r (a landmark embedding; guide-tree-tolerant). */
 	if ( nrefs > 0 )
 	{
+		/* NOTE: not parallelised -- each i writes D[i][*] but also reads
+		   D[j][refs[k]] for all j (rows owned by other i), and overwrites the
+		   refs columns that others read. Kept serial (cheap: O(n^2 * R)
+		   arithmetic, no DP). */
 		for ( int i = 0; i < num_seqs; i++ )
 		{
 			int Li = strlen ( ( char * ) seq[i] );

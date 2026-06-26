@@ -285,24 +285,24 @@ int main(int argc, char **argv)
 	{
 		double _s = gettime ();
 
-	#pragma omp parallel for
+		if ( sw . l == 0 )
+			sw . l = sqrt ( strlen ( ( char * ) seq[0] ) );
+
+		if ( sw . m == 0 && sw . q >= sw . l )
+		{
+			fprintf ( stderr, " Error: The length of the q-gram must be smaller than the block length.\n" );
+			exit ( 1 );
+		}
+
+	#pragma omp parallel for schedule(dynamic)
 	for ( int i = 0; i < num_seqs; i++ )
 	{	
 		unsigned int m = strlen ( ( char * ) seq[i] );
-		
-		if( sw . l == 0 )
-			sw . l = sqrt(m);
-	
+
 		if( sw . P * sw . l > m/3 )
 		{
 			fprintf( stderr, " Error: P is too large!\n" );
 			exit( EXIT_FAILURE );
-		}
-
-		if( sw . m == 0 && sw . q >= sw . l )
-		{
-			fprintf ( stderr, " Error: The length of the q-gram must be smaller than the block length.\n" );
-			exit( 1 );
 		}
 
 		for ( int j = 0; j < num_seqs; j ++ )
@@ -357,10 +357,9 @@ int main(int argc, char **argv)
 
 	if ( sw . m == 0 )
 	{
+		#pragma omp parallel for collapse(2) schedule(dynamic)
 		for(int i=0; i<num_seqs; i++)
 		{
-		
-
 			for(int j=0; j<num_seqs; j++)
 			{
 				unsigned int distance = 0;
@@ -381,8 +380,6 @@ int main(int argc, char **argv)
 
 					free( xr );
 				}
-
-			
 			}
 		}
 	}

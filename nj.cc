@@ -60,22 +60,26 @@ unsigned int nj(TPOcc ** D, unsigned int n, unsigned char ** seq, struct TSwitch
 	typedef Iterator<TGraph, EdgeIterator>::Type TEdgeIter;
 	TEdgeIter edIt(njTreeOut);
 	array<int, 2> children;
+	vector<int> * branchingOrderSrc = new vector<int>();  /* source (internal-node) vertex for each entry */
 	for(;!atEnd(edIt);goNext(edIt)) {
+		int src = (int) sourceVertex( edIt );
 		children[0] = (int) targetVertex(edIt);
 		goNext(edIt);
 		children[1] = (int) targetVertex(edIt);
 		branchingOrder->push_back( children );
+		branchingOrderSrc->push_back( src );
 	}
 
 	fprintf ( stderr, " Starting progressive alignment\n" );
 
 	/*Progressively aligns sequences using refined sequences*/
 	_t0 = gettime ();
-	progAlignment( D, seq , njTreeOut, sw , Rot , branchingOrder, n );
+	progAlignment( D, seq , njTreeOut, sw , Rot , branchingOrder, branchingOrderSrc, n );
 	double _t_prog = gettime () - _t0;
 	fprintf ( stderr, "Phase times: njtree=%lf  progressive=%lf secs.\n", _t_njtree, _t_prog );
 
 	delete( branchingOrder );
+	delete( branchingOrderSrc );
 	
 	return 0;
 
