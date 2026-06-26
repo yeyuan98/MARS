@@ -3,3 +3,12 @@ libsdsl/
 sdsl-lite/
 seqan/
 mars
+
+# MARS benchmark: regenerable inputs + platform-dependent outputs
+# (paper datasets re-clone from lorrainea/MARS; scaled sets via gen_circular.py;
+#  raw metrics are machine-specific -- regenerate with run_bench.py / run_scaled.py)
+verify/bench/data/
+verify/bench/out/
+__pycache__/
+
+verify/technical_report
