@@ -28,6 +28,7 @@
 #include "mars.h"
 #include "sacsc.h"
 #include "nj.h"
+#include "simd_dp.h"
 #include <array>
 #include <functional>
 
@@ -1250,22 +1251,6 @@ unsigned int alignmentScore_ag(vector<unsigned char *> * profileA, vector<unsign
 	int m = strlen( ( char * ) profileA->at(0) );
 	int n = strlen( ( char * ) profileB->at(0) );
 
-	double u;
-	double v;
-	double w;
-
-	double pds = 0;
-
-
-	SM[0] = 0 ; // needs to be 0 for u but needs to be sw . 0 for w 
-	for (int i = 1; i < n + 1; ++i) 
-	{
-		SM[i] =  sw . U + sw . V *( i -1 );
-	}
-
-
-	double prev_diag = 0;
-
 	/* Precompute, for each column j of profileB and each character l, the summed
 	   similarity of that column against l: colScore[j][l] = (1/|B|) sum_k sim.
 	   Then each DP cell costs O(sigma) instead of O(|B|*sigma) -- a |B|-factor
@@ -1287,75 +1272,20 @@ unsigned int alignmentScore_ag(vector<unsigned char *> * profileA, vector<unsign
 		}
 	}
 
-	int init = sw . U;
-	for (int i = 1; i < m + 1; i++ ) 
-	{
+	/* Affine profile-profile DP. SIMD anti-diagonal engine (Tier 3b-hard) by
+	   default; scalar reference behind -DMARS_NO_SIMD_DP. SM/IM/DM from
+	   alignAllocation_ag are unused by the engine (it uses internal buffers) but
+	   are retained for the scalar fallback path. */
+#if defined(MARS_NO_SIMD_DP)
+	double smn = gotohAg_scalar ( PM, colScore, m, n, sigma, sw . U, sw . V, TB, calculate_TB );
+#else
+	double smn = gotohAg_simd   ( PM, colScore, m, n, sigma, sw . U, sw . V, TB, calculate_TB );
+#endif
 
-		if ( i == 1 )
-			prev_diag = 0;
-		else prev_diag = sw . U + sw . V * ( i - 2 );
-		pds = 0;
-
-		
-		SM[0] = sw . U + sw . V * ( i - 1 );
-
-		IM[0] = -1 * m;
-	
-
-		for (int j = 1; j < n + 1; j++) 
-		{
-		    	pds = SM[j];
-
-			{
-				double ps = 0;
-				const double * cs = &colScore[ j * sigma ];
-				const double * pmrow = PM[i-1];
-				#pragma omp simd reduction(+:ps)
-				for ( int l = 0; l < sigma; l++ )
-					ps += pmrow[l] * cs[l];
-				u = prev_diag + ps;
-			}
-			
-			if( i == 1 && j == 1 )
-				DM[j] = MAX2 ( DM[j] + sw . V, init + sw . U );
-			else DM[j] = MAX2 ( DM[j] + sw . V, SM[j] + sw . U );
-			v = DM[j];
-  
-			if( i == 1 && j == 1 )
-				IM[j] =  MAX2 ( IM[j-1] + sw . V, init + sw . U );
-			else IM[j] = MAX2 ( IM[j-1] + sw . V, SM[j-1] + sw . U );
-			w = IM[j];
-
-			SM[j] = MAX3 ( u, v, w );
-
-			if ( calculate_TB == 1 )
-			{
-				if( SM[j] == u)
-				{
-					TB[i][j] = 0;
-					
-				}
-				else if(SM[j] == w )
-				{
-					TB[i][j] = -1;
-				}
-				else if( SM[j] == v )
-				{
-					TB[i][j] = 1;
-				}
-			}
-
-			if ( i == 1 && j == 1 )
-				prev_diag = sw . U ;
-			else prev_diag = pds;
-		}
-	}
-
-
-	if( SM[n] > (*score) )
+	if( smn > (*score) )
 	{
 		( * rotation ) = i;
-		( *score ) = SM[n];
+		( *score ) = smn;
 	}
 
 	free ( colScore );

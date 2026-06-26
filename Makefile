@@ -2,7 +2,15 @@ MF=     Makefile
  
 CC=     g++
  
-CFLAGS= -g -D_USE_OMP -O3 -fomit-frame-pointer -funroll-loops -pthread
+CFLAGS= -g -D_USE_OMP -O3 -fomit-frame-pointer -funroll-loops -pthread -I ./simde-0.8.2
+
+# SIMD DP (Tier 3b-hard): enable AVX2/FMA profile-profile DP. Pass NOAVX=1 to
+# build the scalar fallback only (for CPUs without AVX2).
+ifeq ($(NOAVX),)
+    SIMD_FLAGS := -mavx2 -mfma
+else
+    SIMD_FLAGS := -DMARS_NO_SIMD_DP
+endif
 
 # Detect OS for platform-specific settings
 UNAME_S := $(shell uname -s)
@@ -29,9 +37,9 @@ LFLAGS= -std=c++11 -I ./ -I ./libsdsl/include/ -L ./libsdsl/lib/ -lsdsl -ldivsuf
  
 EXE=    mars
  
-SRC=    mars.cc matrices.cc utils.cc sacsc.cc ced.cc nj.cc progAlignment.cc cyclic.cc RestrictedLevenshtein.cc bb.cc heap.cc edlib.cc
- 
-HD=     EBLOSUM62.h EDNAFULL.h mars.h sacsc.h ced.h nj.h RestrictedLevenshtein.h heap.h Makefile
+SRC=    mars.cc matrices.cc utils.cc sacsc.cc ced.cc nj.cc progAlignment.cc cyclic.cc RestrictedLevenshtein.cc bb.cc heap.cc edlib.cc simd_dp.cc
+  
+HD=     EBLOSUM62.h EDNAFULL.h mars.h sacsc.h ced.h nj.h RestrictedLevenshtein.h heap.h simd_dp.h Makefile
  
 # 
 # No need to edit below this line 
@@ -43,7 +51,9 @@ HD=     EBLOSUM62.h EDNAFULL.h mars.h sacsc.h ced.h nj.h RestrictedLevenshtein.h
 OBJ=    $(SRC:.cc=.o) 
  
 .cc.o: 
-	$(CC) $(CFLAGS) -c $(LFLAGS) $< 
+	$(CC) $(CFLAGS) $(SIMD_FLAGS) -c $(LFLAGS) $< 
+
+# simd_dp.o always needs the (possibly empty) SIMD flags; built via the rule above.
  
 all:    $(EXE) 
  

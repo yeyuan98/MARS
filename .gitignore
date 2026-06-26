@@ -3,6 +3,7 @@ libsdsl/
 sdsl-lite/
 seqan/
 mars
+simde-0.8.2.tar.gz
 
 # MARS benchmark: regenerable inputs + platform-dependent outputs
 # (paper datasets re-clone from lorrainea/MARS; scaled sets via gen_circular.py;
